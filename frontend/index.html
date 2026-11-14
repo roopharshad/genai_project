@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocRestore AI · Legacy UI Asset Restorer</title>
+  <meta name="description" content="DocRestore AI: recovering and enhancing visual assets from legacy applications.">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <button class="menu-toggle" id="menuToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div class="scrim" id="scrim" hidden></div>
+
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+    <a class="brand" href="#/overview">
+      <img src="assets/logo.svg" alt="" width="34" height="34">
+      <span><strong>DocRestore AI</strong><small>Legacy UI Asset Restorer</small></span>
+    </a>
+    <p class="nav-label">Contents</p>
+    <nav>
+      <ul class="nav" id="nav"></ul>
+    </nav>
+    <div class="sidebar-foot">
+      <img src="assets/leaf-branch.svg" alt="" class="sidebar-leaf" aria-hidden="true">
+      <p class="service-status" id="serviceStatus"><span class="dot"></span>Checking service…</p>
+      <p class="lab-label">Generative AI<br>Research Project</p>
+    </div>
+  </aside>
+
+  <main class="main" id="main" tabindex="-1">
+    <img src="assets/leaf-corner.svg" alt="" class="leaf leaf-tr" aria-hidden="true">
+    <img src="assets/leaf-corner.svg" alt="" class="leaf leaf-bl" aria-hidden="true">
+    <div class="page" id="page"></div>
+  </main>
+
+  <script src="js/app.js" type="module"></script>
+</body>
+</html>

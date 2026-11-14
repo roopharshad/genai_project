@@ -1,0 +1,11 @@
+# DocRestore AI backend (Python 3.10+)
+fastapi==0.162.5
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+httpx==0.28.1
+pillow==12.3.0
+numpy==2.2.6
+python-dotenv==1.2.4
+truststore>=0.10
+# Used by scripts/inspect_restoration_api.py (Client.view_api). 1.x still reads Gradio 3 Spaces.
+gradio_client==1.14.0
