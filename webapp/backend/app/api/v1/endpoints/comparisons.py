@@ -71,6 +71,7 @@ def get_asset_comparison(
             "version_type": orig_v.version_type,
             "stored_filename": orig_v.stored_filename,
             "image_url": f"/storage/originals/{orig_v.stored_filename}",
+            "url": f"/storage/originals/{orig_v.stored_filename}",  # field read by ComparisonPage.tsx
             "width": orig_v.width,
             "height": orig_v.height,
             "file_size": orig_v.file_size
@@ -81,6 +82,9 @@ def get_asset_comparison(
             "version_type": rest_v.version_type,
             "stored_filename": rest_v.stored_filename,
             "image_url": f"/storage/restored/{rest_v.stored_filename}",
+            # ComparisonPage.tsx reads `.url`; without it the page showed the original twice.
+            "url": (f"/storage/restored/{rest_v.stored_filename}" if rest_v.version_type == "restored"
+                    else f"/storage/originals/{rest_v.stored_filename}"),
             "width": rest_v.width,
             "height": rest_v.height,
             "file_size": rest_v.file_size,

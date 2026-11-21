@@ -26,7 +26,10 @@ import truststore  # noqa: E402
 
 truststore.inject_into_ssl()
 
-from backend.services import docres_service, enhance_service, gfpgan_service, local_gfpgan_service  # noqa: E402
+import torch  # noqa: E402,F401  (load torch before paddle; both ship MKL DLLs on Windows)
+
+from backend.services import (  # noqa: E402
+    docres_service, document_pipeline, enhance_service, gfpgan_service, local_gfpgan_service)
 from app.ml_engine.models.opencv.classical_restorer import OpenCVRestorer  # noqa: E402
 
 
@@ -67,17 +70,18 @@ def _photo_pipeline(img: Image.Image, mode: str, cfg: Dict[str, Any], steps: Lis
     return img
 
 
-def _document_pipeline(img: Image.Image, cfg: Dict[str, Any], steps: List[str]) -> Image.Image:
-    """DocRes (DocRes-master) document restoration, with OpenCV fallback."""
+STAGES_DIR = Path(__file__).resolve().parents[4] / "storage" / "stages"
+
+
+def _document_pipeline(img: Image.Image, cfg: Dict[str, Any], steps: List[str], extra: Dict[str, Any]) -> Image.Image:
+    """DocRes + text-preserving refinement + PaddleOCR verification, with OpenCV fallback."""
     ok, why = docres_service.available()
     if os.getenv("DOCUMENT_ENGINE", "docres").lower() == "docres" and ok:
-        cropped, note = enhance_service.page_crop(img)
-        if note:
-            steps.append(note)  # page found quickly: DocRes dewarping not needed
-        out, ds = docres_service.restore(cropped, "end2end", skip_dewarp=bool(note))
-        steps.extend(ds)
-        out, n = enhance_service.remove_page_specks(out)
-        steps.append(f"Removed {n} specks and dust marks" if n else "No specks found")
+        run_id = time.strftime("%Y%m%d-%H%M%S-") + os.urandom(3).hex()
+        out, report = document_pipeline.run(img, STAGES_DIR / run_id, steps)
+        extra["stages_url"] = f"/storage/stages/{run_id}/"
+        extra["stages"] = sorted(p.name for p in (STAGES_DIR / run_id).iterdir())
+        extra["text_report"] = report
         return out
     if not ok:
         steps.append(f"DocRes unavailable ({why}); used classical document cleanup")
@@ -191,12 +195,15 @@ class ModelRegistry:
         mem_before = proc.memory_info().rss / 1048576
         h, w = input_image_np.shape[:2]
         steps: List[str] = []
+        extra: Dict[str, Any] = {}
 
-        if model_id == "opencv":
+        if model_id == "opencv" and not (config.get("auto_document", True)
+                                         and enhance_service.is_document(Image.fromarray(input_image_np))):
             restored = OpenCVRestorer.restore(input_image_np, config)
             steps.append("Classical bilateral denoise, unsharp mask and CLAHE")
         else:
-            img = _fit(Image.fromarray(input_image_np).convert("RGB"))
+            full = Image.fromarray(input_image_np).convert("RGB")
+            img = _fit(full)  # photos: bounded working size for the face model
             try:
                 # Pages of text go to document restoration; the face model cannot clean paper.
                 if model_id != "document" and config.get("auto_document", True) and enhance_service.is_document(img):
@@ -205,9 +212,10 @@ class ModelRegistry:
                 else:
                     model_id_run = model_id
                 if model_id_run == "document":
-                    out = _document_pipeline(img, config, steps)
+                    out = _document_pipeline(full, config, steps, extra)  # documents: full resolution
                 else:
-                    mode = {"ai_restoration": "balanced", "ai_fidelity": "fidelity", "ai_detail": "detail"}.get(model_id)
+                    mode = {"ai_restoration": "balanced", "ai_fidelity": "fidelity", "ai_detail": "detail",
+                            "opencv": "balanced"}.get(model_id)
                     if mode is None:
                         raise ValueError(f"Unknown model '{model_id}'.")
                     out = _photo_pipeline(img, mode, config, steps)
@@ -224,5 +232,6 @@ class ModelRegistry:
             "output_resolution": f"{restored.shape[1]}x{restored.shape[0]}",
             "model_id": model_id,
             "steps": steps,
+            **extra,
         }
         return restored, metrics

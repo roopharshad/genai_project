@@ -1,0 +1,6 @@
+Legacy System Operations Manual
+Section 4.2 Restoring archived user interface assets.
+All toolbar icons must be exported at 32 x 32 pixels before migration.
+Screens recorded in 1998 use the original 256-colour palette.
+Contact the systems office for access to the backup tapes.
+Reference: DOC-1998-114, revision C, approved by the review board.
