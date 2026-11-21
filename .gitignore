@@ -4,3 +4,10 @@ __pycache__/
 .env
 storage/
 _extract/
+
+node_modules/
+webapp/storage/
+samples/
+models/
+*.pth
+GFPGAN-master/gfpgan/weights/*.pth

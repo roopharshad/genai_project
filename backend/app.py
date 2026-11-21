@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse  # n
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from . import config, db  # noqa: E402
-from .services import asset_service, gfpgan_service, ui_service  # noqa: E402
+from .services import asset_service, enhance_service, gfpgan_service, ui_service  # noqa: E402
 from .services.image_utils import (  # noqa: E402
     ValidationError, cleanup_old_jobs, describe, fit_for_processing, load_image, new_job_dir, to_rgb,
 )
@@ -40,6 +40,11 @@ def _validation(_, exc: ValidationError):
 
 @app.exception_handler(gfpgan_service.RestorationError)
 def _restoration(_, exc: gfpgan_service.RestorationError):
+    return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
+
+@app.exception_handler(enhance_service.EnhanceError)
+def _enhance(_, exc: enhance_service.EnhanceError):
     return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
 
@@ -67,6 +72,7 @@ def options():
             {"id": k, "label": v[1], "description": v[2]} for k, v in gfpgan_service.MODES.items()
         ],
         "default_mode": gfpgan_service.DEFAULT_MODE,
+        "colorize_available": enhance_service.colorize_available(),
         "ui_engines": [{"id": k, "label": v} for k, v in ui_service.ENGINES.items()],
         "max_upload_mb": config.MAX_UPLOAD_MB,
         "max_process_side": config.MAX_PROCESS_SIDE,
@@ -87,11 +93,15 @@ def _process_image(kind: str, file: UploadFile, run):
     except Exception as exc:
         db.record(job_id, kind, "failed", file.filename, time.time() - started, error=str(exc))
         raise
+    steps = []
+    if isinstance(result, tuple):
+        result, steps = result
     duration = round(time.time() - started, 1)
     result.save(job_dir / "result.png", "PNG")
-    db.record(job_id, kind, "success", file.filename, duration, meta={"resized": resized})
+    db.record(job_id, kind, "success", file.filename, duration, meta={"resized": resized, "steps": steps})
     return {
         "job_id": job_id,
+        "steps": steps,
         "filename": file.filename,
         "duration": duration,
         "resized_for_processing": resized,
@@ -101,9 +111,53 @@ def _process_image(kind: str, file: UploadFile, run):
     }
 
 
+def _restore_pipeline(im, content, mode, scale, remove_marks, mark_strength, colorize, clarity, doc_style, crop_page=True):
+    steps = []
+    if not 1 <= scale <= 4:
+        raise ValidationError("Scale must be between 1 and 4.")
+    if content == "document":
+        style = doc_style if doc_style in ("color", "aged", "bw") else "color"
+        im, notes = enhance_service.enhance_document(im, scale, style, crop=crop_page, remove_specks=remove_marks)
+        steps.extend(notes)
+        if scale != 1:
+            steps.append(f"Upscaled {scale:g}×")
+        return im, steps
+    if content != "photo":
+        raise ValidationError("Unknown content type.")
+
+    mono = enhance_service._looks_monochrome(im)
+    if remove_marks:
+        im, pct = enhance_service.remove_marks(im, mark_strength)
+        steps.append(f"Removed scratches and marks ({pct}% of pixels repaired)" if pct else "No scratches or marks detected")
+    im = gfpgan_service.restore(im, mode, scale)
+    steps.append(f"AI Image Restoration: faces restored, image enhanced and upscaled {scale:g}×")
+    if colorize:
+        if mono:
+            im = enhance_service.colorize(im)
+            steps.append("Added colour with AI colourization (predicted colours)")
+        else:
+            steps.append("Colourization skipped: the photo already has colour")
+    if clarity:
+        im = enhance_service.finish_photo(im)
+        steps.append("Improved clarity: local contrast and sharpening")
+    return im, steps
+
+
 @app.post("/api/restore")
-def restore(file: UploadFile = File(...), mode: str = Form(gfpgan_service.DEFAULT_MODE), scale: float = Form(2)):
-    return _process_image("restoration", file, lambda im: gfpgan_service.restore(im, mode, scale))
+def restore(
+    file: UploadFile = File(...),
+    content: str = Form("photo"),
+    mode: str = Form(gfpgan_service.DEFAULT_MODE),
+    scale: float = Form(2),
+    remove_marks: bool = Form(True),
+    mark_strength: str = Form("normal"),
+    colorize: bool = Form(False),
+    clarity: bool = Form(True),
+    doc_style: str = Form("color"),
+    crop_page: bool = Form(True),
+):
+    return _process_image("restoration", file, lambda im: _restore_pipeline(
+        im, content, mode, scale, remove_marks, mark_strength, colorize, clarity, doc_style, crop_page))
 
 
 @app.post("/api/ui/reconstruct")

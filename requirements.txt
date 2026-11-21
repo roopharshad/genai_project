@@ -9,3 +9,22 @@ python-dotenv==1.2.4
 truststore>=0.10
 # Used by scripts/inspect_restoration_api.py (Client.view_api). 1.x still reads Gradio 3 Spaces.
 gradio_client==1.14.0
+opencv-python-headless<5
+# New UI backend (webapp/backend)
+sqlalchemy
+pyjwt
+argon2-cffi
+psutil
+scikit-image
+reportlab
+# Local GFPGAN (GFPGAN-master). Install torch first:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install --no-deps --no-build-isolation basicsr facexlib
+addict
+lmdb
+pyyaml
+scipy
+tqdm
+yapf
+filterpy
+numba
