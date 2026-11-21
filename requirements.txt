@@ -28,3 +28,4 @@ tqdm
 yapf
 filterpy
 numba
+einops

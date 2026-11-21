@@ -11,3 +11,5 @@ samples/
 models/
 *.pth
 GFPGAN-master/gfpgan/weights/*.pth
+
+*.pkl

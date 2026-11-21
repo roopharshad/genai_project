@@ -26,7 +26,7 @@ import truststore  # noqa: E402
 
 truststore.inject_into_ssl()
 
-from backend.services import enhance_service, gfpgan_service, local_gfpgan_service  # noqa: E402
+from backend.services import docres_service, enhance_service, gfpgan_service, local_gfpgan_service  # noqa: E402
 from app.ml_engine.models.opencv.classical_restorer import OpenCVRestorer  # noqa: E402
 
 
@@ -65,6 +65,27 @@ def _photo_pipeline(img: Image.Image, mode: str, cfg: Dict[str, Any], steps: Lis
         img = enhance_service.finish_photo(img)
         steps.append("Improved clarity (local contrast + sharpening)")
     return img
+
+
+def _document_pipeline(img: Image.Image, cfg: Dict[str, Any], steps: List[str]) -> Image.Image:
+    """DocRes (DocRes-master) document restoration, with OpenCV fallback."""
+    ok, why = docres_service.available()
+    if os.getenv("DOCUMENT_ENGINE", "docres").lower() == "docres" and ok:
+        cropped, note = enhance_service.page_crop(img)
+        if note:
+            steps.append(note)  # page found quickly: DocRes dewarping not needed
+        out, ds = docres_service.restore(cropped, "end2end", skip_dewarp=bool(note))
+        steps.extend(ds)
+        out, n = enhance_service.remove_page_specks(out)
+        steps.append(f"Removed {n} specks and dust marks" if n else "No specks found")
+        return out
+    if not ok:
+        steps.append(f"DocRes unavailable ({why}); used classical document cleanup")
+    scale = float(cfg.get("scale", 2))
+    style = cfg.get("doc_style", "color")
+    out, notes = enhance_service.enhance_document(img, scale, style if style in ("aged", "color", "bw") else "color")
+    steps.extend(notes)
+    return out
 
 
 class ModelRegistry:
@@ -184,10 +205,7 @@ class ModelRegistry:
                 else:
                     model_id_run = model_id
                 if model_id_run == "document":
-                    scale = float(config.get("scale", 2))
-                    style = config.get("doc_style", "color")
-                    out, notes = enhance_service.enhance_document(img, scale, style if style in ("aged", "color", "bw") else "color")
-                    steps.extend(notes)
+                    out = _document_pipeline(img, config, steps)
                 else:
                     mode = {"ai_restoration": "balanced", "ai_fidelity": "fidelity", "ai_detail": "detail"}.get(model_id)
                     if mode is None:

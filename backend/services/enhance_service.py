@@ -307,6 +307,25 @@ def _clean_ink(ink: np.ndarray) -> tuple[np.ndarray, int]:
     return out, int(remove.sum())
 
 
+def remove_page_specks(img: Image.Image) -> tuple[Image.Image, int]:
+    """Erase dust/specks on an already clean page (e.g. after DocRes), keeping text and colours."""
+    bgr = _to_bgr(img)
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    paper = float(np.percentile(gray, 90))
+    ink = np.clip((paper - gray - 20) / 80.0, 0, 1)
+    cleaned, n = _clean_ink(ink)
+    erase = (ink > 0) & (cleaned == 0)
+    if not erase.any():
+        return img, 0
+    m = cv2.dilate(erase.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
+    return _to_pil(cv2.inpaint(bgr, m, 3, cv2.INPAINT_TELEA)), n
+
+
+def page_crop(img: Image.Image) -> tuple[Image.Image, str | None]:
+    out, note = crop_page(_to_bgr(img))
+    return _to_pil(out), note
+
+
 def enhance_document(img: Image.Image, scale: float = 2, style: str = "color",
                      crop: bool = True, remove_specks: bool = True) -> tuple[Image.Image, list]:
     """Restore a photographed or scanned page.
