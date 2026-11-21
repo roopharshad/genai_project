@@ -1,6 +1,6 @@
-"""Compare original vs DocRes vs DocRes+DocDiff vs DocRes+text refinement with PaddleOCR CER/WER.
+"""Compare original vs DocRes vs DocRes+text refinement with PaddleOCR CER/WER.
 
-Usage: python scripts/text_eval.py ORIGINAL DOCRES_OUTPUT GROUND_TRUTH.txt [DOCDIFF_OUTPUT]
+Usage: python scripts/text_eval.py ORIGINAL DOCRES_OUTPUT GROUND_TRUTH.txt [OTHER_OUTPUT]
 """
 import json
 import sys
@@ -38,7 +38,7 @@ guarded.save(f"samples/stage_final_{stem}.png")
 
 rows = [("original", ol), ("docres", dl), ("docres+refine", rl), ("final (refine+guard)", gl)]
 if docdiff_p:
-    rows.insert(2, ("docres+docdiff", o.read(Image.open(docdiff_p))))
+    rows.insert(2, ("other", o.read(Image.open(docdiff_p))))
 print(f"{'stage':24} {'CER':>7} {'WER':>7} {'conf':>6}")
 for name, lines in rows:
     t = o.joined(lines)

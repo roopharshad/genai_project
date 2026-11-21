@@ -27,12 +27,3 @@ MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 10)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 # Images larger than this (longest side, px) are downscaled before remote processing.
 MAX_PROCESS_SIDE = _int("MAX_PROCESS_SIDE", 1600)
-# Finished jobs older than this are removed at startup.
-RETENTION_HOURS = _int("RETENTION_HOURS", 72)
-
-STORAGE_DIR = Path(os.getenv("STORAGE_DIR", ROOT_DIR / "storage"))
-JOBS_DIR = STORAGE_DIR / "jobs"
-DB_PATH = STORAGE_DIR / "docrestore.sqlite3"
-FRONTEND_DIR = ROOT_DIR / "frontend"
-
-JOBS_DIR.mkdir(parents=True, exist_ok=True)

@@ -7,7 +7,6 @@
 | 0 | `0_original.png` | Upload as received (the asset original in `storage/originals/` is never modified) |
 | 1 | `1_preprocessed.png` | Page cropped off its background, if a page border is found |
 | 2 | `2_docres.png` | DocRes deshadowing + appearance (`docres_service.py`, unchanged) |
-| 2b | `2b_docdiff.png` | Optional DocDiff deblurring (`DOCDIFF_REFINE=1`, off by default) |
 | 3 | `3_text_refined.png` | Strokes DocRes erased are put back from the original; dust on letters removed |
 | 4 | `4_ocr_guarded.png` | Lines that read worse than the original are re-rendered from the original's strokes |
 | 5 | `5_final.png` | Stage 2, 3 or 4, whichever PaddleOCR reads most like the original |
@@ -35,21 +34,14 @@ Guarantees:
 DocRes 0.9563, refinement 0.9495, guard 0.9550. The pipeline therefore kept the DocRes output.
 Refinement does not help on every page, and the selection step stops it from making a page worse.
 
-DocDiff on the DocRes output (faded document): CER 0.0203 → 0.0203, WER 0.1538 → 0.1346, and
-311 s per page on CPU. It makes strokes darker, but it did not change the number of character
-errors, so it is off by default.
-
-## DocDiff assessment
-
-- Official weights: `checksave/init.pth` + `denoiser.pth`. These are the deblurring task only, trained on synthetic blurred text crops (Hradiš et al. 2015). The seal-removal weights do not apply here.
-- Compatible: yes. It takes any RGB page in 128 px tiles at native resolution.
-- One edit to the official code: `model/DocDiff.py` used `torch.tensor([0]).cuda()` as a default argument, which crashes at import on CPU-only machines. That default is never used.
-- Trade-off: it costs about 5 minutes per page on CPU for no measured gain on these samples. It is likely to help genuinely blurred scans. Enable it with `DOCDIFF_REFINE=1`.
+DocDiff (github.com/Royalvice/DocDiff, deblurring weights) was tested on the DocRes output of the
+faded document: CER 0.0203 → 0.0203, WER 0.1538 → 0.1346, at 311 s per page on CPU. It gave no
+character-level gain, so it was removed from the project.
 
 ## Installation
 
-- DocRes weights: `DocRes-master/checkpoints/docres.pkl` and `DocRes-master/data/MBD/checkpoint/mbd.pkl` (from the official Space `qubvel-hf/documents-restoration`).
-- DocDiff weights: `DocDiff-main/checksave/{init,denoiser}.pth` (from github.com/Royalvice/DocDiff).
+- DocRes weights: `DocRes-master/checkpoints/docres.pkl` (from the official Space `qubvel-hf/documents-restoration`).
+- Optional dewarping weights: `DocRes-master/data/MBD/checkpoint/mbd.pkl` (680 MB, same Space). Not shipped; dewarping is skipped when the file is absent.
 - PaddleOCR: see `requirements.txt`. Models (about 20 MB) download once to `~/.paddlex/official_models`.
 
 ## Environment variables
@@ -57,8 +49,7 @@ errors, so it is off by default.
 | Variable | Default | Meaning |
 |---|---|---|
 | `DOCRES_MAX_SIZE` | 768 | DocRes network size. Use 1600 on a GPU. |
-| `DOCRES_DEWARP` | 0 | 1 = run DocRes dewarping (for curled pages only) |
-| `DOCDIFF_REFINE` | 0 | 1 = add DocDiff deblurring after DocRes |
+| `DOCRES_DEWARP` | 0 | 1 = run DocRes dewarping (curled pages only; needs `mbd.pkl`) |
 | `OCR_DEVICE` | cpu | e.g. `gpu:0` with a Paddle GPU build |
 | `OCR_MKLDNN` | 0 | oneDNN kernels. They fail with Paddle 3.3 on these models. |
 | `OCR_TIMEOUT_SECONDS` | 300 | OCR worker timeout |

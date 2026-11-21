@@ -1,7 +1,6 @@
 """Document restoration pipeline with text preservation and OCR verification.
 
 original -> preprocess (page crop) -> DocRes (deshadowing + appearance)
-         -> [optional DocDiff deblurring, DOCDIFF_REFINE=1]
          -> text-preserving refinement (restore strokes DocRes erased, remove dust on letters)
          -> PaddleOCR line guard (lines that read worse than the original fall back to the
             original's own strokes on the clean background)
@@ -21,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from . import docdiff_service, docres_service, enhance_service, ocr_service, text_refine_service as tr
+from . import docres_service, enhance_service, ocr_service, text_refine_service as tr
 
 log = logging.getLogger("docrestore.document")
 
@@ -58,18 +57,6 @@ def run(original: Image.Image, stage_dir: Path, steps: list, ground_truth: str |
     save("2_docres", docres_out)
     timings["docres_s"] = round(time.time() - t, 1)
     current = docres_out
-
-    # 2b. optional DocDiff (official deblurring weights)
-    if os.getenv("DOCDIFF_REFINE", "0") == "1":
-        ok, why = docdiff_service.available()
-        if ok:
-            t = time.time()
-            current = docdiff_service.refine(current)
-            save("2b_docdiff", current)
-            timings["docdiff_s"] = round(time.time() - t, 1)
-            steps.append(f"DocDiff deblurring refinement ({timings['docdiff_s']}s)")
-        else:
-            steps.append(f"DocDiff skipped: {why}")
 
     report = {"ocr_available": False, "stages": {}, "timings": timings}
     ok, why = ocr_service.available()
