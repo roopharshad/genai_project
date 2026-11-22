@@ -29,7 +29,8 @@ truststore.inject_into_ssl()
 import torch  # noqa: E402,F401  (load torch before paddle; both ship MKL DLLs on Windows)
 
 from backend.services import (  # noqa: E402
-    docres_service, document_pipeline, enhance_service, gfpgan_service, local_gfpgan_service)
+    docres_service, document_pipeline, enhance_service, gfpgan_service, local_gfpgan_service,
+    local_realesrgan_service)
 from app.ml_engine.models.opencv.classical_restorer import OpenCVRestorer  # noqa: E402
 
 
@@ -51,8 +52,10 @@ def _photo_pipeline(img: Image.Image, mode: str, cfg: Dict[str, Any], steps: Lis
     if engine == "local" and ok:
         weight = {"balanced": 0.5, "fidelity": 0.3, "detail": 0.8}.get(mode, 0.5)
         img, faces = local_gfpgan_service.restore(img, scale, weight)
-        steps.append(f"GFPGAN v1.4 (local, GFPGAN-master): restored {faces} face(s), upscaled {scale:g}x"
-                     if faces else f"GFPGAN v1.4 (local): no faces found, image upscaled {scale:g}x")
+        bg_ai = os.getenv("REALESRGAN_ENABLED", "1") == "1" and local_realesrgan_service.available()[0]
+        detail = "Real-ESRGAN restored background detail; " if bg_ai else ""
+        steps.append(f"{detail}GFPGAN v1.4 restored {faces} face(s), upscaled {scale:g}x"
+                     if faces else f"{detail}no faces found; image upscaled {scale:g}x")
     else:
         if engine == "local":
             steps.append(f"Local GFPGAN unavailable ({why}); used hosted service")
@@ -73,12 +76,13 @@ def _photo_pipeline(img: Image.Image, mode: str, cfg: Dict[str, Any], steps: Lis
 STAGES_DIR = Path(__file__).resolve().parents[4] / "storage" / "stages"
 
 
-def _document_pipeline(img: Image.Image, cfg: Dict[str, Any], steps: List[str], extra: Dict[str, Any]) -> Image.Image:
+def _document_pipeline(img: Image.Image, cfg: Dict[str, Any], steps: List[str], extra: Dict[str, Any],
+                       progress=None) -> Image.Image:
     """DocRes + text-preserving refinement + PaddleOCR verification, with OpenCV fallback."""
     ok, why = docres_service.available()
     if os.getenv("DOCUMENT_ENGINE", "docres").lower() == "docres" and ok:
         run_id = time.strftime("%Y%m%d-%H%M%S-") + os.urandom(3).hex()
-        out, report = document_pipeline.run(img, STAGES_DIR / run_id, steps)
+        out, report = document_pipeline.run(img, STAGES_DIR / run_id, steps, config=cfg, progress=progress)
         extra["stages_url"] = f"/storage/stages/{run_id}/"
         extra["stages"] = sorted(p.name for p in (STAGES_DIR / run_id).iterdir())
         extra["text_report"] = report
@@ -106,10 +110,10 @@ class ModelRegistry:
 
     # Preset ids are fixed by the UI (RestorationPage.tsx) and must stay the same.
     _PRESET_TARGET = {
-        "recommended": "ai_restoration",
-        "gfpgan_prior": "ai_fidelity",
-        "balanced": "opencv",
-        "high_quality": "ai_detail",
+        "recommended": "document",
+        "gfpgan_prior": "document",
+        "balanced": "document",
+        "high_quality": "document",
         "document": "document",
     }
 
@@ -142,7 +146,7 @@ class ModelRegistry:
     def resolve_preset(cls, preset_id: str) -> Tuple[str, Dict[str, Any]]:
         if preset_id in cls._PRESET_TARGET:
             target = cls._PRESET_TARGET[preset_id]
-            defaults = {"colorize": True} if preset_id == "high_quality" else {}
+            defaults = {"fast_mode": False}
             return target, defaults
         return preset_id, {}
 
@@ -188,7 +192,7 @@ class ModelRegistry:
 
     @classmethod
     def run_restoration(cls, model_id: str, input_image_np: np.ndarray,
-                        config: Dict[str, Any] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+                        config: Dict[str, Any] = None, progress=None) -> Tuple[np.ndarray, Dict[str, Any]]:
         config = config or {}
         start = time.perf_counter()
         proc = psutil.Process(os.getpid())
@@ -197,31 +201,14 @@ class ModelRegistry:
         steps: List[str] = []
         extra: Dict[str, Any] = {}
 
-        if model_id == "opencv" and not (config.get("auto_document", True)
-                                         and enhance_service.is_document(Image.fromarray(input_image_np))):
-            restored = OpenCVRestorer.restore(input_image_np, config)
-            steps.append("Classical bilateral denoise, unsharp mask and CLAHE")
-        else:
-            full = Image.fromarray(input_image_np).convert("RGB")
-            img = _fit(full)  # photos: bounded working size for the face model
-            try:
-                # Pages of text go to document restoration; the face model cannot clean paper.
-                if model_id != "document" and config.get("auto_document", True) and enhance_service.is_document(img):
-                    steps.append("Detected a document page: using Document Restoration")
-                    model_id_run = "document"
-                else:
-                    model_id_run = model_id
-                if model_id_run == "document":
-                    out = _document_pipeline(full, config, steps, extra)  # documents: full resolution
-                else:
-                    mode = {"ai_restoration": "balanced", "ai_fidelity": "fidelity", "ai_detail": "detail",
-                            "opencv": "balanced"}.get(model_id)
-                    if mode is None:
-                        raise ValueError(f"Unknown model '{model_id}'.")
-                    out = _photo_pipeline(img, mode, config, steps)
-            except gfpgan_service.RestorationError as exc:
-                raise RuntimeError(str(exc)) from exc
-            restored = np.array(out.convert("RGB"))
+        # This deployment accepts documents only; every preset uses the protected document pipeline.
+        full = Image.fromarray(input_image_np).convert("RGB")
+        try:
+            steps.append("Document-only mode: using protected document restoration")
+            out = _document_pipeline(full, config, steps, extra, progress)
+        except gfpgan_service.RestorationError as exc:
+            raise RuntimeError(str(exc)) from exc
+        restored = np.array(out.convert("RGB"))
 
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
         metrics = {

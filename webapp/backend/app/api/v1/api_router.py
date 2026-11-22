@@ -10,7 +10,8 @@ from app.api.v1.endpoints import (
     reports,
     settings,
     notifications,
-    admin
+    admin,
+    document_ai
 )
 
 api_router = APIRouter()
@@ -26,4 +27,5 @@ api_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Administrator"])
+api_router.include_router(document_ai.router, prefix="/document-ai", tags=["Document AI"])
 

@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { NeonButton } from '../../components/common/NeonButton';
 import { Badge } from '../../components/common/Badge';
-import { comparisonService, assetService } from '../../services/api';
+import { comparisonService, assetService, documentAiService } from '../../services/api';
 import { Project, Asset } from '../../types';
 
 export const ComparisonPage: React.FC = () => {
@@ -73,7 +73,18 @@ export const ComparisonPage: React.FC = () => {
 
   const evalData = comparisonData?.evaluation;
   const original = comparisonData?.original_version;
-  const restored = comparisonData?.restored_version;
+  const restoredRaw = comparisonData?.restored_version;
+  const [showAi, setShowAi] = useState(false);
+  const [quality, setQuality] = useState<any>(null);
+  const [qualityError, setQualityError] = useState('');
+  useEffect(() => {
+    setQuality(null); setQualityError(''); setShowAi(false);
+    if (!selectedAssetId || !restoredRaw || restoredRaw.version_type === 'original') return;
+    documentAiService.quality(selectedAssetId, restoredRaw.id).then(setQuality)
+      .catch((e) => setQualityError(e?.response?.data?.detail || 'Quality evaluation failed'));
+  }, [selectedAssetId, restoredRaw?.id]);
+  const restored = restoredRaw && showAi && restoredRaw.ai_marked_url
+    ? { ...restoredRaw, url: restoredRaw.ai_marked_url } : restoredRaw;
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -170,44 +181,73 @@ export const ComparisonPage: React.FC = () => {
         </div>
       )}
 
-      {/* Quality Evaluation Metrics Bar (Reference-Based Metrics) */}
-      <div className="p-4 rounded-xl bg-surface border border-border shadow-card">
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-2">
-            <Badge variant="ai" glow>Active Restored Model: {restored?.model_id || 'Residual U-Net'}</Badge>
+      {/* Restoration Quality Evaluator */}
+      <div className="p-4 rounded-xl bg-surface border border-border shadow-card space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="ai" glow>
+              {restoredRaw?.version_type === 'ai_reconstructed' ? 'AI reconstructed (LaMa)'
+                : restoredRaw?.version_type === 'enhanced' ? 'Restored + Enhanced' : `Restored: ${restoredRaw?.model_id || '—'}`}
+            </Badge>
             <span className="text-xs text-text-secondary font-mono">
-              Version {restored?.version_number || 2} of {comparisonData?.all_versions?.length || 2}
+              Version {restoredRaw?.version_number ?? '—'} of {comparisonData?.available_versions?.length ?? '—'}
             </span>
+            {restoredRaw?.ai_marked_url && (
+              <button onClick={() => setShowAi(!showAi)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-mono border ${showAi ? 'bg-hot-pink text-white border-hot-pink' : 'border-hot-pink/50 text-hot-pink'}`}>
+                {showAi ? 'Hide' : 'Show'} AI-generated regions
+              </button>
+            )}
           </div>
-
-          {/* Reference-based metrics */}
-          <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
-            <div className="flex items-center gap-1.5">
-              <span className="text-steel">PSNR:</span>
-              <span className="font-bold text-royal-purple">{evalData?.psnr ? `${evalData.psnr} dB` : '30.68 dB*'}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-steel">SSIM:</span>
-              <span className="font-bold text-royal-blue">{evalData?.ssim ? evalData.ssim : '0.9184*'}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-steel">LPIPS:</span>
-              <span className="font-bold text-hot-pink">{evalData?.lpips ? evalData.lpips : '0.112*'}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-steel">OCR Word Acc:</span>
-              <span className="font-bold text-success">
-                {evalData?.ocr_word_acc ? `${Math.round(evalData.ocr_word_acc * 100)}%` : '89%*'}
+          {quality && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-steel">Quality score</span>
+              <span className={`text-lg font-bold font-mono ${quality.quality_score >= 70 ? 'text-success' : quality.quality_score >= 45 ? 'text-orange-600' : 'text-error'}`}>
+                {quality.quality_score}/100
               </span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-steel">Edge Score:</span>
-              <span className="font-bold text-neon-violet">
-                {evalData?.edge_preservation_score ? evalData.edge_preservation_score : '0.876*'}
-              </span>
-            </div>
-          </div>
+          )}
         </div>
+        {!restoredRaw || restoredRaw.version_type === 'original' ? (
+          <div className="text-xs text-text-secondary">No restored version yet. Run a restoration to see quality scores.</div>
+        ) : qualityError ? (
+          <div className="text-xs text-error">{qualityError}</div>
+        ) : !quality ? (
+          <div className="text-xs text-text-secondary font-mono">Evaluating quality (damage before/after, ink preservation, OCR)...</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs font-mono">
+              {[
+                ['Damage score', `${quality.damage_score_before} → ${quality.damage_score_after}`, `-${quality.damage_reduction_pct}%`],
+                ['Strokes kept', quality.stroke_preservation != null ? `${(quality.stroke_preservation * 100).toFixed(1)}%` : '—', 'handwriting/ink'],
+                ['Dots kept', quality.dot_preservation != null ? `${(quality.dot_preservation * 100).toFixed(1)}%` : '—', 'i-dots, punctuation'],
+                [quality.ocr?.kind === 'accuracy_vs_approved_text' ? 'OCR accuracy' : 'OCR agreement',
+                  quality.ocr?.char_accuracy != null ? `${(quality.ocr.char_accuracy * 100).toFixed(1)}%`
+                    : quality.ocr?.char_agreement != null ? `${(quality.ocr.char_agreement * 100).toFixed(1)}%` : 'n/a',
+                  quality.ocr?.kind === 'accuracy_vs_approved_text' ? `CER ${quality.ocr.cer}` : quality.ocr?.kind === 'unavailable' ? 'handwriting' : 'vs original reading'],
+                ['PSNR', `${quality.psnr_vs_original} dB`, 'vs uploaded original'],
+                ['SSIM', `${quality.ssim_vs_original}`, 'vs uploaded original'],
+              ].map(([label, value, sub]) => (
+                <div key={label} className="p-2 rounded-lg bg-surface-muted border border-border">
+                  <div className="text-steel text-[10px] uppercase">{label}</div>
+                  <div className="font-bold text-royal-purple text-sm">{value}</div>
+                  <div className="text-[10px] text-text-secondary">{sub}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2 text-[10px] font-mono">
+              {Object.entries<any>(quality.per_damage || {}).map(([k, v]) => (
+                <span key={k} className="px-2 py-0.5 rounded border border-border bg-white">
+                  {k.replace(/_/g, ' ')}: {Math.round(v.before * 100)}% → {Math.round(v.after * 100)}%
+                </span>
+              ))}
+              {quality.ai_generated_pct > 0 && (
+                <span className="px-2 py-0.5 rounded border border-hot-pink text-hot-pink">AI-generated: {quality.ai_generated_pct}% of page</span>
+              )}
+            </div>
+            <div className="text-[10px] text-text-secondary">{quality.notes}{quality.ocr?.note ? ` ${quality.ocr.note}` : ''}</div>
+          </>
+        )}
       </div>
 
       {/* Studio Canvas Display */}
@@ -231,7 +271,7 @@ export const ComparisonPage: React.FC = () => {
               <div className="relative rounded-xl overflow-hidden border-2 border-neon-violet/30 shadow-2xl select-none max-w-3xl">
                 {/* Restored sharp image background */}
                 <img
-                  src={restored?.url || `/storage/originals/${original?.stored_filename}`}
+                  src={restored?.url ? `${restored.url}?v=${restored.id}` : `/storage/originals/${original?.stored_filename}`}
                   alt="Restored"
                   className="max-h-[500px] w-auto object-contain block"
                 />
@@ -301,7 +341,7 @@ export const ComparisonPage: React.FC = () => {
                   </div>
                   <div className="rounded-xl overflow-hidden border-2 border-royal-purple bg-black shadow-glow-purple flex items-center justify-center p-2">
                     <img
-                      src={restored?.url || `/storage/originals/${original?.stored_filename}`}
+                      src={restored?.url ? `${restored.url}?v=${restored.id}` : `/storage/originals/${original?.stored_filename}`}
                       alt="Restored"
                       className="max-h-[420px] object-contain"
                     />
@@ -314,7 +354,7 @@ export const ComparisonPage: React.FC = () => {
             {viewMode === 'difference' && (
               <div className="relative rounded-xl overflow-hidden border border-white/20 shadow-2xl max-w-3xl">
                 <img
-                  src={restored?.url || `/storage/originals/${original?.stored_filename}`}
+                  src={restored?.url ? `${restored.url}?v=${restored.id}` : `/storage/originals/${original?.stored_filename}`}
                   alt="Difference Layer"
                   className="max-h-[500px] w-auto object-contain filter invert contrast-200 hue-rotate-180"
                 />

@@ -43,12 +43,7 @@ export const RestorationPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   // Dynamic parameters state
-  const [paramsState, setParamsState] = useState<Record<string, any>>({
-    blend_ratio: 1.0,
-    base_channels: 48,
-    sampling_steps: 15,
-    unsharp_strength: 1.4,
-  });
+  const [paramsState, setParamsState] = useState<Record<string, any>>({});
 
   useEffect(() => {
     async function loadData() {
@@ -120,18 +115,7 @@ export const RestorationPage: React.FC = () => {
   const selectedModel = models.find(m => m.id === selectedModelId) || models[0];
   const selectedAsset = assets.find(a => a.id === selectedAssetId);
 
-  const targetParams = !advancedMode
-    ? (selectedModelId === 'recommended'
-        ? [{ name: 'blend_ratio', label: 'Restoration Strength', type: 'float', default: 1.0, min: 0.5, max: 2.0 }]
-        : (selectedModelId === 'gfpgan_prior'
-            ? [{ name: 'blend_ratio', label: 'Prior Weight', type: 'float', default: 1.0, min: 0.5, max: 1.5 }]
-            : (selectedModelId === 'balanced'
-                ? [{ name: 'unsharp_strength', label: 'Edge Boost', type: 'float', default: 1.4, min: 1.0, max: 2.5 }]
-                : [{ name: 'sampling_steps', label: 'Diffusion Steps', type: 'int', default: 15, min: 5, max: 30 }]
-              )
-          )
-      )
-    : (selectedModel?.parameters || []);
+  const targetParams = advancedMode ? (selectedModel?.parameters || []) : [];
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -145,7 +129,7 @@ export const RestorationPage: React.FC = () => {
           Configure & Launch AI Restoration Engine
         </h1>
         <p className="mt-1 text-sm text-text-secondary">
-          Choose between UI-Aware Residual U-Net, Conditional Diffusion, or benchmark baselines to restore software screenshots.
+          Restore historical documents with protected paper repair, DocRes, and text-preservation checks.
         </p>
       </div>
 
@@ -162,7 +146,7 @@ export const RestorationPage: React.FC = () => {
         <div className="lg:col-span-2 space-y-6">
           {/* Target Asset Selector Card */}
           <div className="p-6 rounded-card bg-surface border border-border shadow-card space-y-4">
-            <h2 className="text-sm font-display font-bold text-text-primary">1. Select Target Legacy Screenshot</h2>
+            <h2 className="text-sm font-display font-bold text-text-primary">1. Select Document</h2>
             {assets.length === 0 ? (
               <div className="p-6 text-center border border-dashed border-border rounded-xl text-xs text-text-secondary">
                 No screenshots found in current project.
@@ -219,13 +203,13 @@ export const RestorationPage: React.FC = () => {
                 </p>
               </div>
 
-              {isPlatformAdmin && (
+              {false && isPlatformAdmin && (
                 <button
                   type="button"
                   onClick={() => {
                     const next = !advancedMode;
                     setAdvancedMode(next);
-                    setSelectedModelId(next ? 'residual_unet' : 'recommended');
+                    setSelectedModelId(next ? 'document' : 'recommended');
                   }}
                   className="px-2.5 py-1 rounded-lg text-xs font-mono font-medium border border-neon-violet/30 text-neon-violet hover:bg-neon-violet/10 transition-colors"
                 >
@@ -240,35 +224,11 @@ export const RestorationPage: React.FC = () => {
                 {[
                   {
                     id: 'recommended',
-                    name: 'Recommended',
-                    badge: 'Optimal Fidelity',
+                    name: 'Complete Document Restoration',
+                    badge: 'Full Pipeline',
                     is_primary: true,
-                    desc: 'UI-Aware Residual U-Net. Best overall quality for software documentation. Preserves text readability, character geometry, and sharp button borders.',
+                    desc: 'Runs paper and stain correction, protected LaMa repair, DocRes clarity restoration, text refinement, OCR verification, and final handwriting-preservation checks.',
                     icon: <Cpu className="w-4 h-4 text-neon-violet" />
-                  },
-                  {
-                    id: 'gfpgan_prior',
-                    name: 'GFPGAN Feature Prior',
-                    badge: 'Generative Prior',
-                    is_primary: false,
-                    desc: 'Generative Feature Prior GAN with StyleGAN2 SFT modulation to synthesize high-frequency UI details, crisp icons, and clear typography.',
-                    icon: <Sparkles className="w-4 h-4 text-royal-purple" />
-                  },
-                  {
-                    id: 'balanced',
-                    name: 'Balanced',
-                    badge: 'Ultra Fast',
-                    is_primary: false,
-                    desc: 'Fast baseline restoration. Rapid bilateral smoothing and unsharp edge sharpening for quick batch cleanups.',
-                    icon: <Zap className="w-4 h-4 text-royal-purple" />
-                  },
-                  {
-                    id: 'high_quality',
-                    name: 'High Quality',
-                    badge: 'Generative AI',
-                    is_primary: false,
-                    desc: 'Conditional diffusion generative restoration. Synthesizes fine sub-pixel interface details and resolves extreme compression blur.',
-                    icon: <Sparkles className="w-4 h-4 text-hot-pink" />
                   }
                 ].map((preset) => (
                   <button
@@ -367,7 +327,7 @@ export const RestorationPage: React.FC = () => {
               </div>
             ) : (
               <p className="text-xs text-text-secondary">
-                This model operates with standardized baseline weights. No hyperparameter tuning required.
+                This pipeline uses safe defaults to protect text, handwriting, and page layout.
               </p>
             )}
 
@@ -425,6 +385,28 @@ export const RestorationPage: React.FC = () => {
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>PSNR, SSIM & Edge Evaluation</span>
                 </div>
+                {(() => {
+                  const stage = activeJob.stage || '';
+                  const running = activeJob.status !== 'completed' && activeJob.status !== 'failed' && stage.startsWith('Enhancement');
+                  const done = activeJob.status === 'completed' && stage.includes('enhancement completed');
+                  const skipped = activeJob.status === 'completed' && !done;
+                  const pct = running ? Math.max(0, Math.min(100, Math.round(((activeJob.progress - 92) / 8) * 100))) : done ? 100 : 0;
+                  return (
+                    <div className={`space-y-1 ${done ? 'text-success' : running ? 'text-neon-violet' : 'text-steel'}`}>
+                      <div className="flex items-center gap-2">
+                        {running ? <RotateCcw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        <span>Enhancement</span>
+                        {skipped && <span className="ml-auto text-[10px] text-steel">not applied</span>}
+                        {done && <span className="ml-auto text-[10px]">done</span>}
+                      </div>
+                      {running && (
+                        <div className="ml-5 w-[calc(100%-1.25rem)] bg-sidebar-panel rounded-full h-1.5 overflow-hidden">
+                          <div className="h-full rounded-full bg-gradient-ai transition-all duration-300" style={{ width: `${Math.max(8, pct)}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Completion Action */}

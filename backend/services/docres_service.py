@@ -30,7 +30,7 @@ TASKS = ("end2end", "dewarping", "deshadowing", "appearance", "deblurring", "bin
 # inference.py uses 1600. Larger inputs are processed at this size and the result is applied
 # to the full-resolution image as a shading map (same code path as the original).
 # On CPU 1600 takes over 30 minutes per page; 768 takes about 1 minute. Use 1600 with a GPU.
-MAX_SIZE = int(os.getenv("DOCRES_MAX_SIZE", "768"))
+MAX_SIZE = int(os.getenv("DOCRES_MAX_SIZE", "512"))
 
 _lock = threading.Lock()
 _state: dict = {}

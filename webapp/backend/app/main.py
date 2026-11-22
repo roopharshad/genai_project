@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.database import Base, engine, SessionLocal
 from app.api.v1.api_router import api_router
-from app.models.entities import User, Workspace, WorkspaceMember, Project, Asset, AssetVersion, Experiment
+from app.models.entities import (User, Workspace, WorkspaceMember, Project, Asset, AssetVersion,
+                                 Experiment, RestorationJob)
 from app.core.security import get_password_hash
 from app.api.v1.endpoints.analytics import ensure_experiments_seeded
 from PIL import Image, ImageDraw
@@ -17,6 +18,12 @@ def init_db_and_seed():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        # Jobs cannot survive a process restart because workers are in-memory threads.
+        db.query(RestorationJob).filter(RestorationJob.status.in_(("queued", "validating", "processing", "evaluating"))).update(
+            {"status": "failed", "stage": "Interrupted by server restart",
+             "error_message": "Please start this restoration again."}, synchronize_session=False)
+        db.commit()
+
         # 1. Seed demo user
         user = db.query(User).filter(User.email == "demo@docrestore.ai").first()
         if not user:

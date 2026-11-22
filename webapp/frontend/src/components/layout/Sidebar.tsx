@@ -14,7 +14,8 @@ import {
   Layers,
   ExternalLink,
   LogIn,
-  UserPlus
+  UserPlus,
+  MessageSquare
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -37,6 +38,7 @@ export const Sidebar: React.FC<SidebarProps> = () => {
     { to: '/upload', label: 'Upload & Import', icon: <UploadCloud className="w-4 h-4" /> },
     { to: '/restoration', label: 'Restoration Studio', icon: <Sparkles className="w-4 h-4" />, highlight: true },
     { to: '/comparison', label: 'Comparison Studio', icon: <SplitSquareVertical className="w-4 h-4" /> },
+    { to: '/document-ai', label: 'Document AI Studio', icon: <MessageSquare className="w-4 h-4" />, highlight: true },
     { to: '/analytics', label: 'Quality Analytics', icon: <BarChart3 className="w-4 h-4" /> },
     { to: '/library', label: 'Asset Library', icon: <FolderKanban className="w-4 h-4" /> },
     { to: '/export', label: 'Export & Reports', icon: <FileDown className="w-4 h-4" /> },
@@ -74,10 +76,10 @@ export const Sidebar: React.FC<SidebarProps> = () => {
         </div>
         <div className="font-semibold text-xs text-white flex items-center gap-1.5">
           <Cpu className="w-3.5 h-3.5 text-neon-violet" />
-          Residual U-Net (PyTorch)
+          DocRes + LaMa + PaddleOCR
         </div>
         <div className="text-[10px] text-steel mt-0.5 font-mono">
-          UI-Aware Loss (L1 + SSIM + Sobel)
+          Damage-driven model selection
         </div>
       </div>
 

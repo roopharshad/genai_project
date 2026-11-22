@@ -32,7 +32,7 @@ export interface AssetVersion {
   id: string;
   asset_id: string;
   version_number: number;
-  version_type: 'original' | 'restored' | 'synthetic_degraded';
+  version_type: 'original' | 'restored' | 'synthetic_degraded' | 'ai_reconstructed' | 'enhanced';
   stored_filename: string;
   file_size: number;
   width: number;

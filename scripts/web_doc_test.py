@@ -33,4 +33,5 @@ for k, v in r.get("stages", {}).items():
     print(f"  {k:14} agreement={v.get('agreement_with_original_reading')} conf={v.get('mean_confidence')}")
 out = "samples/web_final_" + f.split("/")[-1].rsplit(".", 1)[0] + ".png"
 open(out, "wb").write(c.get(rv["url"]).content)
-print("stage file http:", c.get(op["stages_url"] + "2_docres.png").status_code, "saved", out)
+stage_name = "2_docres.png" if "2_docres.png" in (op.get("stages") or []) else "5_final.png"
+print("stage file http:", c.get(op["stages_url"] + stage_name).status_code, "saved", out)

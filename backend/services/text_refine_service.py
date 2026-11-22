@@ -163,6 +163,33 @@ def remove_dark_specks(img: Image.Image, text_mask: np.ndarray, lines: list | No
     return Image.fromarray(cv2.inpaint(rgb, m.astype(np.uint8) * 255, 1, cv2.INPAINT_TELEA)), len(ids)
 
 
+def remove_background_specks(img: Image.Image, text_mask: np.ndarray, lines: list) -> tuple[Image.Image, int]:
+    """Remove compact dark dust only well outside high-confidence OCR text regions."""
+    if len(lines) < 4:
+        return img, 0
+    scores = [float(line.get("score", 0)) for line in lines]
+    if not scores or float(np.mean(scores)) < 0.90:
+        return img, 0
+    rgb = np.asarray(img.convert("RGB"))
+    gray = _gray(img)
+    paper = float(np.percentile(gray, 85))
+    dark = (gray < paper - 65).astype(np.uint8)
+    n, labels, st, _ = cv2.connectedComponentsWithStats(dark, 8)
+    protected = cv2.dilate(text_mask.astype(np.uint8), np.ones((11, 11), np.uint8)) > 0
+    remove_ids = []
+    for i in range(1, n):
+        x, y, w, h, area = st[i]
+        comp = labels[y:y + h, x:x + w] == i
+        if (area <= 40 and max(w, h) <= 10 and
+                not protected[y:y + h, x:x + w][comp].any()):
+            remove_ids.append(i)
+    if not remove_ids:
+        return img, 0
+    erase = np.isin(labels, remove_ids)
+    erase = cv2.dilate(erase.astype(np.uint8), np.ones((3, 3), np.uint8))
+    return Image.fromarray(cv2.inpaint(rgb, erase * 255, 2, cv2.INPAINT_TELEA)), len(remove_ids)
+
+
 def fallback_render(original: Image.Image, restored: Image.Image, box_mask: np.ndarray) -> np.ndarray:
     """Clean paper (from DocRes) + full original ink inside box_mask: the most literal rendering."""
     rgb = np.asarray(restored.convert("RGB")).astype(np.float32)
@@ -206,34 +233,45 @@ def _iou(a, b) -> float:
 def line_guard(original: Image.Image, refined: Image.Image, orig_lines: list, ref_lines: list,
                ocr_read) -> tuple[Image.Image, list, list]:
     """Revert lines whose restored reading is worse than the original's. Returns (image, lines, reverted)."""
+    # All differing lines are fallback-rendered into ONE candidate page and read with ONE OCR call
+    # (previously one OCR call per line: 20+ calls of ~5 s each on handwritten pages).
     reverted = []
-    rgb = np.asarray(refined.convert("RGB")).copy()
-    h, w = rgb.shape[:2]
+    base = np.asarray(refined.convert("RGB")).copy()
+    h, w = base.shape[:2]
+    todo = []
     for ol in orig_lines:
         match = max(ref_lines, key=lambda r: _iou(ol["box"], r["box"]), default=None)
         if match is None or _iou(ol["box"], match["box"]) < 0.3:
             rtext, rscore = "", 0.0
         else:
             rtext, rscore = match["text"], match["score"]
-        if rtext == ol["text"]:
-            continue
-        # The original reading can be wrong too (e.g. a speck read as a letter), so the fallback
-        # is accepted below only if it reads closer to the original AND at least as confidently
-        # as the restored line; a confident restored correction therefore survives.
+        if rtext != ol["text"]:
+            todo.append((ol, rtext, rscore))
+    if not todo:
+        return refined, ref_lines, reverted
+    boxes = np.zeros((h, w), np.float32)
+    for ol, _, _ in todo:
         x0, y0, x1, y1 = ol["box"]
         pad = max(2, (y1 - y0) // 5)
-        box = np.zeros((h, w), np.float32)
-        box[max(0, y0 - pad):min(h, y1 + pad), max(0, x0 - pad):min(w, x1 + pad)] = 1
-        candidate = fallback_render(original, Image.fromarray(rgb), box)
-        crop = Image.fromarray(candidate[max(0, y0 - pad):min(h, y1 + pad), max(0, x0 - pad):min(w, x1 + pad)])
-        c_lines = ocr_read(crop)
-        ctext = " ".join(l["text"] for l in c_lines)
-        cscore = float(np.mean([l["score"] for l in c_lines])) if c_lines else 0.0
-        if _sim(ctext, ol["text"]) > _sim(rtext, ol["text"]) and cscore >= rscore:
-            rgb = candidate
-            reverted.append({"original": ol["text"], "restored": rtext, "after_fallback": ctext,
+        boxes[max(0, y0 - pad):min(h, y1 + pad), max(0, x0 - pad):min(w, x1 + pad)] = 1
+    candidate = fallback_render(original, refined, boxes)
+    cand_lines = ocr_read(Image.fromarray(candidate))
+    accept = np.zeros((h, w), bool)
+    for ol, rtext, rscore in todo:
+        # The original reading can be wrong too (e.g. a speck read as a letter), so the fallback
+        # is accepted only if it reads closer to the original AND at least as confidently.
+        cm = max(cand_lines, key=lambda r: _iou(ol["box"], r["box"]), default=None)
+        if cm is None or _iou(ol["box"], cm["box"]) < 0.3:
+            continue
+        if _sim(cm["text"], ol["text"]) > _sim(rtext, ol["text"]) and cm["score"] >= rscore:
+            x0, y0, x1, y1 = ol["box"]
+            pad = max(2, (y1 - y0) // 5)
+            accept[max(0, y0 - pad):min(h, y1 + pad), max(0, x0 - pad):min(w, x1 + pad)] = True
+            reverted.append({"original": ol["text"], "restored": rtext, "after_fallback": cm["text"],
                              "box": ol["box"]})
     if not reverted:
         return refined, ref_lines, reverted
-    out = Image.fromarray(rgb)
-    return out, ocr_read(out), reverted
+    out = base.copy()
+    out[accept] = candidate[accept]
+    out_img = Image.fromarray(out)
+    return out_img, ocr_read(out_img), reverted

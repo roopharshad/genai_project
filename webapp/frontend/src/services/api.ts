@@ -132,10 +132,26 @@ export const restorationService = {
 export const comparisonService = {
   getComparison: async (assetId: string, originalVersionId?: string, restoredVersionId?: string) => {
     const res = await api.get(`/comparisons/${assetId}`, {
-      params: { original_version_id: originalVersionId, restored_version_id: restoredVersionId }
+      params: { original_version_id: originalVersionId, restored_version_id: restoredVersionId, _t: Date.now() }
     });
     return res.data;
   }
+};
+
+export const documentAiService = {
+  status: async () => (await api.get('/document-ai/status')).data,
+  damage: async (assetId: string) => (await api.get(`/document-ai/${assetId}/damage`)).data,
+  getOcr: async (assetId: string, versionId?: string, refresh = false) =>
+    (await api.get(`/document-ai/${assetId}/ocr`, { params: { version_id: versionId, refresh } })).data,
+  saveOcr: async (assetId: string, lines: string[], versionId?: string, approve = true) =>
+    (await api.put(`/document-ai/${assetId}/ocr`, { lines, version_id: versionId, approve })).data,
+  exportTextUrl: (assetId: string) => `/api/v1/document-ai/${assetId}/ocr/export`,
+  chat: async (assetId: string, question: string, history: { role: string; content: string }[], versionId?: string) =>
+    (await api.post(`/document-ai/${assetId}/chat`, { question, history, version_id: versionId }, { timeout: 180000 })).data,
+  quality: async (assetId: string, versionId?: string) =>
+    (await api.get(`/document-ai/${assetId}/quality`, { params: { version_id: versionId } })).data,
+  reconstruct: async (assetId: string, includeTextAreas: boolean, versionId?: string) =>
+    (await api.post(`/document-ai/${assetId}/reconstruct`, { include_text_areas: includeTextAreas, version_id: versionId })).data,
 };
 
 export const analyticsService = {

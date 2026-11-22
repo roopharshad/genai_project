@@ -1,12 +1,7 @@
 """Local GFPGAN inference using the bundled GFPGAN-master source (no internet needed).
 
-Mirrors GFPGAN-master/inference_gfpgan.py: GFPGANer(model_path=GFPGANv1.4.pth, upscale, arch='clean',
-channel_multiplier=2, bg_upsampler=None) and restorer.enhance(img, has_aligned=False,
-only_center_face=False, paste_back=True).
-
-Without a background upsampler (the official script also disables Real-ESRGAN on CPU),
-faces are restored by GFPGAN and the rest of the image is resized with Lanczos.
-Face detection / parsing weights (facexlib) are downloaded once into GFPGAN-master/gfpgan/weights.
+Mirrors GFPGAN-master/inference_gfpgan.py with local Real-ESRGAN x2plus as the background
+upsampler. GFPGAN restores faces while Real-ESRGAN restores and scales the remaining image.
 """
 import contextlib
 import logging
@@ -21,6 +16,7 @@ import numpy as np
 from PIL import Image
 
 from .. import config
+from . import local_realesrgan_service
 
 log = logging.getLogger("docrestore.gfpgan_local")
 
@@ -81,9 +77,16 @@ def _get(version: str, upscale: float):
             sys.path.insert(0, str(GFPGAN_DIR))
         from gfpgan import GFPGANer
         t = time.time()
+        bg = None
+        if os.getenv("REALESRGAN_ENABLED", "1") == "1":
+            ok, why = local_realesrgan_service.available()
+            if ok:
+                bg = local_realesrgan_service.get_upsampler()
+            else:
+                log.warning("Real-ESRGAN background restoration unavailable: %s", why)
         with _in_gfpgan_dir():
             _restorers[key] = GFPGANer(model_path=str(WEIGHTS[version]), upscale=upscale, arch="clean",
-                                       channel_multiplier=2, bg_upsampler=None)
+                                       channel_multiplier=2, bg_upsampler=bg)
         log.info("loaded local GFPGAN %s x%s in %.1fs", version, upscale, time.time() - t)
     return _restorers[key]
 

@@ -33,3 +33,6 @@ einops
 #   pip install --no-deps paddlepaddle==3.3.1 paddleocr==3.7.0 paddlex==3.7.2
 #   pip install aiohttp aistudio-sdk chardet colorlog modelscope pandas prettytable imagesize
 # (pyclipper, shapely, pypdfium2, python-bidi, ruamel.yaml, ujson come with the line above or are already installed)
+# Local pretrained repair/upscale integrations
+realesrgan==0.3.0
+simple-lama-inpainting==0.1.2

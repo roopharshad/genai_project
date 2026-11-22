@@ -19,6 +19,8 @@ from app.ml_engine.evaluation.ocr_eval import OCREvaluator
 from app.ml_engine.evaluation.edge_eval import EdgePreservationEvaluator
 
 class TaskRunner:
+    _inference_lock = threading.Lock()
+
     """
     Background Task Execution Engine.
     Executes asynchronous restoration jobs through defined stages:
@@ -61,11 +63,23 @@ class TaskRunner:
 
             # Execute Model Inference
             config = job.config_params or {}
-            restored_np, op_metrics = ModelRegistry.run_restoration(
-                model_id=job.model_id,
-                input_image_np=img_np,
-                config=config
-            )
+            def update_progress(value: int, label: str):
+                job.progress = value
+                job.stage = label
+                db.commit()
+
+            job.stage = "Waiting for document restoration processor"
+            db.commit()
+            with cls._inference_lock:
+                job.progress = 40
+                job.stage = f"Executing {job.model_name} inference"
+                db.commit()
+                restored_np, op_metrics = ModelRegistry.run_restoration(
+                    model_id=job.model_id,
+                    input_image_np=img_np,
+                    config=config,
+                    progress=update_progress
+                )
 
             # Stage: Saving output
             job.progress = 75
@@ -110,10 +124,35 @@ class TaskRunner:
             edge_res = EdgePreservationEvaluator.evaluate(restored_np, img_np)
             ocr_res = OCREvaluator.evaluate_text_consistency(restored_np, img_np)
 
+            # Document quality (before/after damage, ink preservation, OCR) against the cropped
+            # page the restoration was made from, so sizes match.
+            doc_quality = None
+            try:
+                from backend.services import quality_service
+                stage_url = op_metrics.get("stages_url")
+                ref = img_rgb
+                if stage_url:
+                    from app.ml_engine.inference.registry import STAGES_DIR
+                    pre_png = STAGES_DIR / stage_url.rstrip("/").split("/")[-1] / "1_preprocessed.png"
+                    if pre_png.exists():
+                        ref = Image.open(pre_png).convert("RGB")
+                rep = op_metrics.get("text_report") or {}
+                doc_quality = quality_service.evaluate(ref, restored_pil, rep, None, rep.get("final_lines"))
+                ref_np = np.array(ref.resize(restored_pil.size))
+                psnr_val = MetricCalculator.calculate_psnr(restored_np, ref_np)
+                ssim_val = MetricCalculator.calculate_ssim(restored_np, ref_np)
+                lpips_val = MetricCalculator.calculate_lpips_approx(restored_np, ref_np)
+                ocr_info = doc_quality.get("ocr") or {}
+                if ocr_info.get("kind") == "agreement_with_original_reading":
+                    ocr_res = {"estimated_character_accuracy": ocr_info.get("char_agreement"),
+                               "estimated_word_accuracy": ocr_info.get("word_agreement"), "source": "PaddleOCR agreement"}
+            except Exception as exc:  # quality is informational: never fail a finished restoration
+                doc_quality = {"error": f"{type(exc).__name__}: {exc}"}
+
             eval_record = EvaluationResult(
                 job_id=job.id,
                 asset_version_id=new_version.id,
-                has_reference=True,
+                has_reference=False,  # compared with the uploaded original, not a clean ground truth
                 psnr=psnr_val,
                 ssim=ssim_val,
                 lpips=lpips_val,
@@ -125,16 +164,24 @@ class TaskRunner:
                 metrics_detail={
                     "edge_evaluation": edge_res,
                     "ocr_evaluation": ocr_res,
+                    "document_quality": doc_quality,
                     "operational": op_metrics
                 }
             )
             db.add(eval_record)
+            db.commit()
+
+            # Final step: Enhancement. Runs only after restoration, validation and evaluation have
+            # succeeded. The enhanced page is saved separately and kept only if PaddleOCR (or, for
+            # unreadable handwriting, the ink-preservation check) confirms the text is unchanged.
+            # A failure here never fails the job: the restored version stays the result.
+            enhancement_note = cls._run_enhancement(db, job, asset, new_version, restored_pil, op_metrics, update_progress)
 
             # Complete Job
             job.output_version_id = new_version.id
             job.status = "completed"
             job.progress = 100
-            job.stage = "Restoration and evaluation completed successfully"
+            job.stage = enhancement_note
             job.completed_at = datetime.now(timezone.utc)
 
             # Create notification
@@ -160,6 +207,56 @@ class TaskRunner:
                 db.commit()
         finally:
             db.close()
+
+    @classmethod
+    def _run_enhancement(cls, db, job, asset, restored_version, restored_pil, op_metrics, update_progress) -> str:
+        """Returns the job's final stage text. Provider details stay in the server log only."""
+        import json
+        from backend.services import enhancement_service
+        from app.ml_engine.inference.registry import STAGES_DIR
+        done = "Restoration, evaluation and enhancement completed successfully"
+        if not enhancement_service.enabled():
+            return "Restoration and evaluation completed successfully; enhancement not configured"
+        update_progress(92, "Enhancement: starting")
+        try:
+            rep = op_metrics.get("text_report") or {}
+            lines = rep.get("final_lines") if rep.get("ocr_reliable", True) and rep.get("final_lines") else None
+            res = enhancement_service.run(restored_pil, lines, progress=update_progress)
+            stage_url = op_metrics.get("stages_url")
+            stage_dir = STAGES_DIR / stage_url.rstrip("/").split("/")[-1] if stage_url else None
+            v = dict(res.get("validation") or {})
+            v.pop("enhanced_lines", None)
+            summary = {"accepted": res["accepted"], "mode": res["mode"], "validation": v,
+                       "elapsed_s": (res.get("info") or {}).get("elapsed_s")}
+            if stage_dir and stage_dir.is_dir():
+                if res.get("candidate") is not None:
+                    res["candidate"].save(stage_dir / "6_enhancement_candidate.png")
+                if res["accepted"]:
+                    res["image"].save(stage_dir / "6_enhanced.png")
+                (stage_dir / "enhancement.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+            if not res["accepted"]:
+                why = "; ".join(v.get("reasons") or []) or "validation failed"
+                return f"Restoration and evaluation completed successfully; enhancement not applied ({why})"
+            update_progress(99, "Enhancement: saving enhanced version")
+            stored, size, w, h = FileStorageService.save_restored_image(res["image"], format="PNG")
+            op = dict(op_metrics)
+            op["steps"] = list(op_metrics.get("steps", [])) + [
+                "Enhancement applied (" + ("full page" if res["mode"] == "full" else "background only, text pixels kept")
+                + f"); verified by {v.get('accepted_by') or 'OCR agreement'}"]
+            if stage_dir:
+                op["stages"] = sorted(p.name for p in stage_dir.iterdir())
+            n = db.query(AssetVersion).filter(AssetVersion.asset_id == asset.id).count()
+            db.add(AssetVersion(asset_id=asset.id, version_number=n + 1, version_type="enhanced",
+                                stored_filename=stored, file_size=size, width=w, height=h, model_id="enhancement",
+                                config_summary={"model_name": "Enhancement", "source_version_id": restored_version.id,
+                                                "enhancement": summary, "operational": op}))
+            db.commit()
+            return done
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger("docrestore.enhancement").exception("enhancement step failed")
+            db.rollback()
+            return "Restoration and evaluation completed successfully; enhancement not applied (internal error)"
 
     @classmethod
     def dispatch_job(cls, job_id: str):

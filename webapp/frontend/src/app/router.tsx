@@ -14,6 +14,7 @@ import { OnboardingPage } from '../features/onboarding/OnboardingPage';
 import { AdminDashboardPage } from '../features/admin/AdminDashboardPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { RegisterPage } from '../features/auth/RegisterPage';
+import { DocumentAIPage } from '../features/document-ai/DocumentAIPage';
 
 const AdminRouteGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   try {
@@ -61,6 +62,10 @@ export const router = createBrowserRouter([
       {
         path: '/comparison',
         element: <ComparisonPage />,
+      },
+      {
+        path: '/document-ai',
+        element: <DocumentAIPage />,
       },
       {
         path: '/analytics',

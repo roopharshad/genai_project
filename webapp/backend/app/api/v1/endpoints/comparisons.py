@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.entities import Asset, AssetVersion, EvaluationResult, User
@@ -6,11 +6,24 @@ from app.api.deps import get_current_user, verify_asset_access
 
 router = APIRouter()
 
+
+def _ai_marked_url(v):
+    """URL of the same image with AI-generated (LaMa) pixels tinted and outlined, if any exist."""
+    cs = v.config_summary or {}
+    if cs.get("marked_url"):
+        return cs["marked_url"]
+    op = cs.get("operational") or {}
+    stages = op.get("stages") or []
+    if op.get("stages_url") and "5_final_ai_marked.png" in stages:
+        return op["stages_url"] + "5_final_ai_marked.png"
+    return None
+
 @router.get("/{asset_id}")
 def get_asset_comparison(
     asset_id: str,
     original_version_id: str = Query(None),
     restored_version_id: str = Query(None),
+    response: Response = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -19,6 +32,8 @@ def get_asset_comparison(
     with strict asset authorization verification.
     """
     asset = verify_asset_access(db, user, asset_id)
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
 
     versions = db.query(AssetVersion).filter(AssetVersion.asset_id == asset.id).order_by(AssetVersion.version_number.asc()).all()
     if not versions:
@@ -36,7 +51,7 @@ def get_asset_comparison(
     if restored_version_id:
         rest_v = next((v for v in versions if v.id == restored_version_id), None)
     if not rest_v:
-        restored_list = [v for v in versions if v.version_type == "restored"]
+        restored_list = [v for v in versions if v.version_type in ("restored", "ai_reconstructed", "enhanced")]
         rest_v = restored_list[-1] if restored_list else versions[-1]
 
     # Retrieve evaluation results for restored version
@@ -83,8 +98,9 @@ def get_asset_comparison(
             "stored_filename": rest_v.stored_filename,
             "image_url": f"/storage/restored/{rest_v.stored_filename}",
             # ComparisonPage.tsx reads `.url`; without it the page showed the original twice.
-            "url": (f"/storage/restored/{rest_v.stored_filename}" if rest_v.version_type == "restored"
-                    else f"/storage/originals/{rest_v.stored_filename}"),
+            "url": (f"/storage/originals/{rest_v.stored_filename}" if rest_v.version_type == "original"
+                    else f"/storage/restored/{rest_v.stored_filename}"),
+            "ai_marked_url": _ai_marked_url(rest_v),
             "width": rest_v.width,
             "height": rest_v.height,
             "file_size": rest_v.file_size,
