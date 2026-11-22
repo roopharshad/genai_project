@@ -2,14 +2,19 @@
 __pycache__/
 *.pyc
 .env
-storage/
-_extract/
 
+# Runtime data and downloaded weights. Patterns start with "/" so they match only these
+# top-level folders, not code folders with the same name (app/models, app/storage, ...).
+/storage/
+/_extract/
+/samples/
+/models/
+/webapp/storage/
 node_modules/
-webapp/storage/
-samples/
-models/
-*.pth
-GFPGAN-master/gfpgan/weights/*.pth
 
+# Model weights (downloaded by scripts/download_models.py)
+*.pth
 *.pkl
+*.pt
+*.caffemodel
+*.part
