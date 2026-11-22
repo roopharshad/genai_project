@@ -41,8 +41,9 @@ export const UploadPage: React.FC = () => {
     setError(null);
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (!file.type.startsWith('image/')) {
-        setError('Please select a valid image file (PNG, JPEG, WebP).');
+      const extOk = /\.(png|jpe?g|jfif|webp|bmp|tiff?)$/i.test(file.name);
+      if (!file.type.startsWith('image/') && !extOk) {
+        setError('Please select a valid image file (PNG, JPG/JPEG, WebP, BMP, TIFF).');
         return;
       }
       if (file.size > 25 * 1024 * 1024) {
@@ -127,7 +128,7 @@ export const UploadPage: React.FC = () => {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,.jpg,.jpeg,.jfif,.png,.webp,.bmp,.tif,.tiff"
               onChange={handleFileChange}
               className="hidden"
             />
@@ -138,7 +139,7 @@ export const UploadPage: React.FC = () => {
               {selectedFile ? selectedFile.name : 'Click or Drag & Drop Screenshot'}
             </div>
             <p className="text-xs text-text-secondary mt-1">
-              Supports PNG, JPEG, WebP, BMP up to 25 MB
+              Supports PNG, JPG/JPEG, WebP, BMP, TIFF up to 25 MB
             </p>
             {selectedFile && (
               <div className="mt-3 text-[11px] font-mono text-royal-purple bg-purple-50 inline-block px-2.5 py-1 rounded-full">

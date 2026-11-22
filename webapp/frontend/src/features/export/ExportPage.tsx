@@ -15,6 +15,28 @@ import { Badge } from '../../components/common/Badge';
 import { reportService, assetService, comparisonService } from '../../services/api';
 import { Project, Asset } from '../../types';
 
+/** Fetch a file with the login token and save it under `filename`. */
+async function downloadFile(url: string, filename: string) {
+  const token = localStorage.getItem('docrestore_token');
+  const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) {
+    let msg = `Download failed (HTTP ${res.status})`;
+    try { msg = (await res.json()).detail || msg; } catch { /* not JSON */ }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 2000);
+}
+
+const baseName = (name?: string) => (name || 'document').replace(/\.[^.]+$/, '');
+
 export const ExportPage: React.FC = () => {
   const { currentProject } = useOutletContext<{ currentProject: Project | null }>();
   const [searchParams] = useSearchParams();
@@ -55,6 +77,24 @@ export const ExportPage: React.FC = () => {
     comparisonService.getComparison(selectedAssetId).then(setComparison).catch(() => {});
   }, [selectedAssetId]);
 
+  const [generatedReport, setGeneratedReport] = useState<any>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  const run = async (key: string, fn: () => Promise<void>) => {
+    try {
+      setDownloading(key);
+      setError(null);
+      await fn();
+    } catch (err: any) {
+      setError(err?.message || 'Download failed.');
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  const downloadReport = (r: any) => run(`report-${r.id}`, () =>
+    downloadFile(`/api/v1/reports/${r.id}/download`, `${(r.title || 'report').replace(/[^\w\- ]+/g, '_')}.${(r.stored_filename || '').endsWith('.pdf') ? 'pdf' : 'txt'}`));
+
   const handleGeneratePdfReport = async () => {
     if (!currentProject) return;
     try {
@@ -65,9 +105,11 @@ export const ExportPage: React.FC = () => {
         `${currentProject.name} — Quality Evaluation Report`
       );
       setGeneratedPdfUrl(res.download_url);
+      setGeneratedReport(res);
       setReportsList(prev => [res, ...prev]);
+      await downloadFile(`/api/v1/reports/${res.id}/download`, `${baseName(currentProject.name)}_quality_report.pdf`);
     } catch (err: any) {
-      setError("Failed to generate PDF report.");
+      setError(err?.message || "Failed to generate PDF report.");
     } finally {
       setGeneratingPdf(false);
     }
@@ -130,21 +172,21 @@ export const ExportPage: React.FC = () => {
             </p>
             {restored && (
               <div className="mt-3 text-[11px] font-mono text-steel space-y-1">
-                <div>Model: <span className="font-semibold text-text-primary">{restored.model_id || 'Residual U-Net'}</span></div>
+                <div>Version: <span className="font-semibold text-text-primary">{restored.version_type === 'enhanced' ? 'Restored + Enhanced' : restored.version_type === 'ai_reconstructed' ? 'AI reconstructed' : restored.version_type === 'original' ? 'Original (not restored yet)' : 'Restored'}</span></div>
                 <div>Dimensions: <span className="text-text-primary">{restored.width} × {restored.height} px</span></div>
               </div>
             )}
           </div>
           <div>
-            <a
-              href={restored?.url || '#'}
-              download={`restored_${comparison?.asset?.original_filename || 'screenshot.png'}`}
-              className="w-full inline-block"
+            <NeonButton
+              variant="primary" size="md" className="w-full"
+              disabled={!restored || restored.version_type === 'original' || downloading === 'image'}
+              icon={<Download className="w-4 h-4" />}
+              onClick={() => run('image', () => downloadFile(restored.url, `restored_${baseName(comparison?.asset?.original_filename)}.png`))}
             >
-              <NeonButton variant="primary" size="md" className="w-full" disabled={!restored} icon={<Download className="w-4 h-4" />}>
-                Download PNG Output
-              </NeonButton>
-            </a>
+              {restored && restored.version_type === 'original' ? 'Restore this document first'
+                : downloading === 'image' ? 'Downloading...' : 'Download PNG Output'}
+            </NeonButton>
           </div>
         </div>
 
@@ -165,12 +207,12 @@ export const ExportPage: React.FC = () => {
             )}
           </div>
           <div>
-            {generatedPdfUrl ? (
-              <a href={generatedPdfUrl} download className="w-full inline-block">
-                <NeonButton variant="ai" size="md" className="w-full" icon={<Download className="w-4 h-4" />}>
-                  Download PDF Report
-                </NeonButton>
-              </a>
+            {generatedPdfUrl && generatedReport ? (
+              <NeonButton variant="ai" size="md" className="w-full" icon={<Download className="w-4 h-4" />}
+                disabled={downloading === `report-${generatedReport.id}`}
+                onClick={() => downloadReport(generatedReport)}>
+                Download PDF Report
+              </NeonButton>
             ) : (
               <NeonButton
                 variant="ai"
@@ -198,11 +240,11 @@ export const ExportPage: React.FC = () => {
             </p>
           </div>
           <div className="space-y-2">
-            <a href={reportService.exportCsvUrl(currentProject?.id)} download className="w-full inline-block">
-              <NeonButton variant="outline" size="md" className="w-full" icon={<Download className="w-4 h-4" />}>
-                Export Metrics CSV
-              </NeonButton>
-            </a>
+            <NeonButton variant="outline" size="md" className="w-full" icon={<Download className="w-4 h-4" />}
+              disabled={downloading === 'csv'}
+              onClick={() => run('csv', () => downloadFile(reportService.exportCsvUrl(currentProject?.id), 'docrestore_evaluation_metrics.csv'))}>
+              {downloading === 'csv' ? 'Exporting...' : 'Export Metrics CSV'}
+            </NeonButton>
             <button
               onClick={handleExportConfigJson}
               disabled={!comparison}
@@ -230,13 +272,15 @@ export const ExportPage: React.FC = () => {
                     <div className="text-[11px] text-steel font-mono">{r.stored_filename || r.filename}</div>
                   </div>
                 </div>
-                <a
-                  href={`/storage/reports/${r.stored_filename || r.filename}`}
-                  download
-                  className="p-2 hover:bg-surface-muted rounded text-royal-purple"
+                <button
+                  type="button"
+                  onClick={() => downloadReport(r)}
+                  disabled={downloading === `report-${r.id}`}
+                  title="Download report"
+                  className="p-2 hover:bg-surface-muted rounded text-royal-purple disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
-                </a>
+                </button>
               </div>
             ))}
           </div>

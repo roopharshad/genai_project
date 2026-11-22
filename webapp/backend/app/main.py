@@ -25,11 +25,11 @@ def init_db_and_seed():
         db.commit()
 
         # 1. Seed demo user
-        user = db.query(User).filter(User.email == "demo@docrestore.ai").first()
+        user = db.query(User).filter(User.email == settings.ADMIN_EMAIL).first()
         if not user:
             user = User(
-                email="demo@docrestore.ai",
-                hashed_password=get_password_hash("docrestore123"),
+                email=settings.ADMIN_EMAIL,
+                hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
                 full_name="Dr. Alex Vance",
                 role="administrator",
                 is_active=True,
@@ -196,6 +196,12 @@ app.mount("/storage", StaticFiles(directory=str(settings.STORAGE_PATH)), name="s
 
 # Include API v1 router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+@app.get("/api/health", include_in_schema=False)
+def health():
+    """Liveness check for hosting platforms and load balancers."""
+    return {"status": "ok"}
 
 # Serve the built React UI (webapp/frontend/dist) with client-side routing fallback.
 from fastapi import HTTPException  # noqa: E402

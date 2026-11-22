@@ -216,7 +216,7 @@ class TaskRunner:
         from app.ml_engine.inference.registry import STAGES_DIR
         done = "Restoration, evaluation and enhancement completed successfully"
         if not enhancement_service.enabled():
-            return "Restoration and evaluation completed successfully; enhancement not configured"
+            return "Restoration and evaluation completed successfully"
         update_progress(92, "Enhancement: starting")
         try:
             rep = op_metrics.get("text_report") or {}

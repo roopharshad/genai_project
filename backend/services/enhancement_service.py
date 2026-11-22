@@ -42,7 +42,7 @@ class EnhancementError(RuntimeError):
 
 def enabled() -> bool:
     key = (os.getenv("GEMINI_API_KEY") or "").strip()
-    return (bool(key) or _cloudflare_ready()) and os.getenv("ENHANCEMENT_ENABLED", "1") == "1"
+    return (bool(key) or _cloudflare_ready()) and os.getenv("ENHANCEMENT_ENABLED", "0") == "1"
 
 
 def _pad(img: Image.Image) -> tuple[Image.Image, str, tuple[int, int, int, int]]:

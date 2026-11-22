@@ -1,0 +1,19 @@
+# Secrets and local state never go into the image
+.env
+.git
+.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+webapp/frontend/dist
+webapp/storage
+storage
+samples
+_extract
+# Weights are downloaded during the build (scripts/download_models.py)
+models
+*.pth
+*.pkl
+*.pt
+*.caffemodel
+**/*.part

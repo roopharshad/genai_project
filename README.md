@@ -50,3 +50,9 @@ docs/TEXT_PRESERVATION.md    document pipeline details and measurements
 ## Environment variables
 
 See `.env.example` and `docs/TEXT_PRESERVATION.md`.
+
+## Deployment
+
+Model weights are not stored in git. Download them with `python scripts/download_models.py`.
+For servers, see [DEPLOY.md](DEPLOY.md) (Docker image, `docker compose up -d --build`, requirements and
+environment variables).

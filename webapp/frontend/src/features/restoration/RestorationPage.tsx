@@ -385,7 +385,7 @@ export const RestorationPage: React.FC = () => {
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>PSNR, SSIM & Edge Evaluation</span>
                 </div>
-                {(() => {
+                {(activeJob.stage || '').toLowerCase().includes('enhancement') && (() => {
                   const stage = activeJob.stage || '';
                   const running = activeJob.status !== 'completed' && activeJob.status !== 'failed' && stage.startsWith('Enhancement');
                   const done = activeJob.status === 'completed' && stage.includes('enhancement completed');

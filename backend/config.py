@@ -5,7 +5,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT_DIR / ".env")
+# .env (local development) wins over variables inherited from the shell. In a container there
+# is no .env file (see .dockerignore), so the platform's environment variables are used.
+load_dotenv(ROOT_DIR / ".env", override=True)
 
 
 def _int(name: str, default: int) -> int:

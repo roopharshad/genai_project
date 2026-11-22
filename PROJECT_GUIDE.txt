@@ -1,0 +1,492 @@
+================================================================================
+DOCRESTORE AI - PROJECT GUIDE
+Models, APIs, integrations, how the pipeline works, and how to deploy
+================================================================================
+
+CONTENTS
+  1. What the project does
+  2. Technology stack
+  3. AI models used (and how each one is used)
+  4. External APIs used
+  5. Non-AI image processing written for this project
+  6. How a document is restored (step by step)
+  7. Website features
+  8. Backend API endpoints
+  9. Project structure (important files)
+ 10. Configuration (.env variables)
+ 11. Measured performance and test results
+ 12. Known limitations
+ 13. DEPLOYMENT GUIDE
+ 14. Troubleshooting
+ 15. Credits and licences
+
+
+--------------------------------------------------------------------------------
+1. WHAT THE PROJECT DOES
+--------------------------------------------------------------------------------
+DocRestore AI restores old and damaged documents (handwritten letters, printed
+pages, book pages). A user uploads a scanned or photographed page; the system
+detects the damage, chooses the restoration models to run, removes stains,
+shadows, specks and yellowing, repairs tears on blank paper, and checks that
+no handwriting or printed text was lost. Users can then read and correct the
+extracted text, ask an AI assistant questions about the document, view quality
+scores, and download the results and reports.
+
+The original upload is never modified. Every result is saved as a separate
+version (original, restored, enhanced, ai_reconstructed).
+
+
+--------------------------------------------------------------------------------
+2. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+Frontend : React 18 + TypeScript + Tailwind CSS, built with Vite
+           (webapp/frontend). Served by the backend as static files.
+Backend  : Python 3.10, FastAPI + Uvicorn (webapp/backend)
+Database : SQLite (webapp/storage/docrestore.db) via SQLAlchemy.
+           PostgreSQL can be used by setting DATABASE_URL.
+Auth     : JWT tokens (PyJWT), passwords hashed with Argon2.
+AI/ML    : PyTorch 2.x (CPU), PaddlePaddle 3.3 (CPU), OpenCV 4, scikit-image
+Jobs     : background threads, one restoration at a time (others queue).
+Storage  : webapp/storage/{originals, restored, thumbnails, stages, reports}
+
+
+--------------------------------------------------------------------------------
+3. AI MODELS USED
+--------------------------------------------------------------------------------
+All models below run LOCALLY on the server's CPU (no GPU needed), except
+Gemini, which is a cloud API (section 4).
+
+3.1 DocRes  (main document restoration model)  - ACTIVE
+    Paper   : "DocRes: A Generalist Model Toward Unifying Document Image
+              Restoration Tasks", CVPR 2024 (Zhang et al.)
+    Network : Restormer transformer, 6-channel input (image + task prompt)
+    Weights : DocRes-master/checkpoints/docres.pkl (175 MB), from the official
+              Hugging Face Space qubvel-hf/documents-restoration
+    Code    : DocRes-master/ (official source) + backend/services/docres_service.py
+              (adapted to run on CPU in float32; the original needs CUDA)
+    Used for:
+      - "appearance" task: removes shadows, stain tint and uneven lighting.
+        Runs on every restoration (~15-20 s).
+      - "deblurring" task: sharpens blurred text. Runs ONLY when damage
+        detection finds blur (adds ~45 s).
+    Not used: dewarping (bent flat pages; its 680 MB weights were removed),
+              binarization.
+    Setting : DOCRES_MAX_SIZE=512 (network working size; result is applied
+              back to the full-resolution page, size never changes).
+
+3.2 LaMa  (inpainting / tear repair)  - ACTIVE
+    Paper   : "Resolution-robust Large Mask Inpainting with Fourier
+              Convolutions", WACV 2022 (Suvorov et al., Samsung AI)
+    Weights : models/lama/big-lama.pt (196 MB, TorchScript), via the
+              simple-lama-inpainting package (release v0.1.0)
+    Code    : backend/services/lama_service.py
+    Used for:
+      - During restoration: fills tears, holes and burns ONLY on blank paper.
+        Areas near detected writing are removed from its mask first, so it
+        never touches text.
+      - Document AI Studio > AI Reconstruction: on request. Optionally also
+        fills damage over writing; then the letters there are AI guesses.
+    LaMa does NOT understand language and cannot recover missing words. It
+    fills an area with texture matching the surrounding paper.
+    Every AI-filled pixel is recorded in a mask, saved as a separate version
+    and shown tinted pink ("Show AI-generated regions" on the Comparison page).
+    Runs in a separate process so its memory is released before DocRes runs.
+
+3.3 PaddleOCR  (text recognition / verification)  - ACTIVE
+    Version : PaddleOCR 3.7.0 with PaddleX 3.7.2 on PaddlePaddle 3.3.1
+    Models  : PP-OCRv5_mobile_det (text detection) and PP-OCRv5_mobile_rec
+              (recognition), ~20 MB, auto-downloaded to
+              ~/.paddlex/official_models on first use
+    Code    : backend/services/ocr_service.py
+    Used for:
+      - Restoration check: reads the page before and after; strokes the
+        models erased are put back, and the stage that reads most like the
+        original (and keeps the most ink) is chosen as the result.
+      - OCR Review page: editable extracted text, unreadable lines marked.
+      - Quality scores: OCR agreement / accuracy (CER, WER).
+      - Document chat: supplies the page text to Gemini.
+    OCR never draws or changes text; it only measures.
+    Runs in a separate worker process (PyTorch and Paddle crash together on
+    Windows when loaded in one process).
+
+3.4 Gemini  (document chatbot)  - ACTIVE (cloud API, see 4.1)
+
+3.5 GFPGAN v1.4  (face restoration for photos)  - INSTALLED, NOT USED NOW
+    Weights : GFPGAN-master/experiments/pretrained_models/GFPGANv1.4.pth
+              + facexlib detection/parsing weights
+    Code    : backend/services/local_gfpgan_service.py
+    The website is in document-only mode, so photos are not routed here.
+
+3.6 Real-ESRGAN x2plus  (photo background upscaling)  - INSTALLED, NOT USED NOW
+    Weights : models/realesrgan/RealESRGAN_x2plus.pth (64 MB)
+    Code    : backend/services/local_realesrgan_service.py
+    Connected as GFPGAN's background upsampler (photo mode only).
+
+3.7 Colourization (Zhang et al., ECCV 2016, Caffe model)  - INSTALLED, NOT USED NOW
+    Files   : models/colorization/ (prototxt, caffemodel, pts_in_hull.npy)
+    For black-and-white photos (photo mode only).
+
+3.8 Image enhancement model (optional final step)  - OFF BY DEFAULT
+    Tried   : Cloudflare Workers AI FLUX.2 [klein] 9B (image editing) and
+              Google Gemini 3.1 Flash Image.
+    Code    : backend/services/enhancement_service.py
+    Result  : works technically (~7 s per page via Cloudflare), but every
+              full AI output CHANGED letters (e.g. "toolbar"->"loolbar",
+              "New York"->"Now York", "1893"->"1093") and was rejected by the
+              PaddleOCR check. A "text-safe" mode keeps original ink pixels and
+              takes only the cleaner background. Both free quotas ran out
+              quickly (Cloudflare 10,000 neurons/day; Gemini image free tier).
+    Status  : ENHANCEMENT_ENABLED=0. When off, no time is added and the
+              checklist does not show the step.
+
+Removed during development: DocDiff (deblurring diffusion model: 5 min per
+page on CPU, no accuracy gain), DocRes dewarping weights (bent flat pages).
+
+
+--------------------------------------------------------------------------------
+4. EXTERNAL APIS USED
+--------------------------------------------------------------------------------
+4.1 Google Gemini API (generativelanguage.googleapis.com, REST, v1beta
+    generateContent)  - ACTIVE, used only by Document Chat
+    Model order: gemini-flash-lite-latest, then gemini-3.1-flash-lite,
+                 gemini-flash-latest (used if the previous one is busy)
+    Sent  : the page image (JPEG, max 1600 px), the extracted text (the
+            user-approved transcription if one exists), restoration steps and
+            the damage report, plus the chat history (last 12 turns).
+    Rules : answer only from the document; mark uncertain words with [?].
+    Key   : GEMINI_API_KEY in the server's .env / environment. Never sent to
+            the browser, never logged, never committed to git.
+    Code  : backend/services/gemini_service.py,
+            webapp/backend/app/api/v1/endpoints/document_ai.py (/chat)
+
+4.2 Cloudflare Workers AI (api.cloudflare.com /ai/run)  - OPTIONAL, OFF
+    Used only by the optional enhancement step (3.8). Needs
+    CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.
+
+4.3 Hosted GFPGAN Hugging Face Space (randomtable/Image-Restoration-GFPGAN)
+    Old photo-mode fallback (RESTORATION_ENGINE=hosted). Not used now.
+
+Model downloads (once, at setup): Hugging Face (DocRes), GitHub releases
+(LaMa, GFPGAN, Real-ESRGAN), PaddleX model hub (PaddleOCR).
+
+
+--------------------------------------------------------------------------------
+5. NON-AI IMAGE PROCESSING WRITTEN FOR THIS PROJECT
+--------------------------------------------------------------------------------
+These are classical computer-vision algorithms (OpenCV/NumPy), not trained
+models:
+
+damage_service.py        Damage detection in < 1 s: blur (edge sharpness),
+                         fading (ink darkness), stains (paper-layer variation),
+                         creases/scratches (straight lines, fold profiles),
+                         specks/noise, tears/burns/missing paper. Produces a
+                         colour-coded damage map and the stage plan (which
+                         models to run and why).
+paper_restore_service.py Ink-protecting paper normalisation: separates the
+                         paper layer from the ink (I = Paper x Ink), removes
+                         stains, yellowing and folds from the paper only;
+                         quality() measures stroke/dot preservation.
+text_refine_service.py   Puts back strokes DocRes erased, removes dust on
+                         letters, OCR line guard, background speck removal.
+enhance_service.py       Page detection and cropping (also photo helpers).
+quality_service.py       Quality evaluator: damage score before/after,
+                         stroke and dot preservation, PSNR, SSIM, OCR
+                         agreement or accuracy, quality score 0-100
+                         (40% damage reduction + 30% ink preservation +
+                         30% text accuracy/agreement).
+document_pipeline.py     Runs all stages, saves each stage image and a
+                         report.json, chooses the safest result.
+
+
+--------------------------------------------------------------------------------
+6. HOW A DOCUMENT IS RESTORED (STEP BY STEP)
+--------------------------------------------------------------------------------
+ 1. Upload (PNG, JPG/JPEG, WebP, BMP, TIFF, max 25 MB). Original stored as-is.
+ 2. Page crop: the page is cut out of its background.
+ 3. Damage detection + model selection (damage_service).
+ 4. LaMa: repairs tears/holes on blank paper (only if tears were detected).
+ 5. DocRes: deblurring (only if blurred), then appearance restoration.
+ 6. PaddleOCR reads the original and restored page:
+      - strokes the models erased are restored from the original,
+      - specks on letters are removed,
+      - lines that read worse are re-rendered from the original strokes.
+    For handwriting (OCR confidence too low to verify) the choice is made by
+    stroke and dot preservation instead.
+ 7. Speck cleanup outside text (kept only if text ink is untouched).
+ 8. Paper normalisation (stains, tint, creases), kept only if it does not
+    reduce text readability.
+ 9. The safest stage is chosen: it must keep >= 98.5% of ink strokes and
+    >= 98% of dots and create almost no new dark marks; then best OCR.
+10. Saved as a new "restored" version; quality metrics computed.
+11. (Optional, off) Enhancement step.
+Every stage image is saved in webapp/storage/stages/<run-id>/ with report.json.
+The output never changes resolution.
+
+
+--------------------------------------------------------------------------------
+7. WEBSITE FEATURES
+--------------------------------------------------------------------------------
+Dashboard, Upload & Import, Restoration Studio (job progress checklist),
+Comparison Studio (slider, side-by-side, quality evaluator, AI-region toggle),
+Document AI Studio:
+   - Damage & Model Plan : damage map, severity per damage type, chosen models
+   - OCR Review          : editable text per line, confidence, unreadable
+                           lines and damaged regions marked, Approve & Save,
+                           download .txt
+   - Document Chat       : Gemini assistant (summaries, transcription,
+                           explanations, follow-up questions)
+   - AI Reconstruction   : LaMa fill of tears/missing regions, marked pink
+Quality Analytics, Asset Library, Export & Reports (restored PNG, PDF report,
+metrics CSV, config JSON), Settings, Admin Center.
+
+
+--------------------------------------------------------------------------------
+8. BACKEND API ENDPOINTS (prefix /api/v1, all need a login token)
+--------------------------------------------------------------------------------
+POST /auth/login                      log in, returns JWT
+POST /assets/upload                   upload a document
+POST /restorations/jobs               start a restoration
+GET  /restorations/jobs/{id}          job status / progress
+GET  /comparisons/{asset_id}          original vs latest result + metrics
+GET  /document-ai/status              which AI services are available
+GET  /document-ai/{asset}/damage      damage detection + model plan
+GET  /document-ai/{asset}/ocr         extracted text (cached or fresh)
+PUT  /document-ai/{asset}/ocr         save / approve corrected text
+GET  /document-ai/{asset}/ocr/export  download approved text
+POST /document-ai/{asset}/chat        ask the document assistant
+GET  /document-ai/{asset}/quality     quality evaluation
+POST /document-ai/{asset}/reconstruct LaMa reconstruction (new version)
+POST /reports/generate                create PDF report
+GET  /reports/{id}/download           download a report
+GET  /reports/export/csv              metrics CSV
+GET  /api/health (no login)           health check for hosting platforms
+Interactive docs: http://<server>/docs
+
+
+--------------------------------------------------------------------------------
+9. PROJECT STRUCTURE (IMPORTANT FILES)
+--------------------------------------------------------------------------------
+webapp/frontend/src/            React pages (features/*), API client
+webapp/backend/app/main.py      FastAPI app, serves the built frontend
+webapp/backend/app/api/v1/      endpoints (document_ai.py, reports.py, ...)
+webapp/backend/app/workers/task_runner.py   background restoration jobs
+webapp/backend/app/ml_engine/inference/registry.py  routes jobs to pipeline
+backend/services/               all model and image-processing services
+DocRes-master/, GFPGAN-master/  official model source code
+models/                         downloaded weights (LaMa, Real-ESRGAN, colour)
+scripts/download_models.py      downloads all weights
+scripts/*_test.py               test scripts (feature_test.py = full test)
+Dockerfile, docker-compose.yml, .dockerignore, DEPLOY.md, .env.example
+
+
+--------------------------------------------------------------------------------
+10. CONFIGURATION (.env OR ENVIRONMENT VARIABLES)
+--------------------------------------------------------------------------------
+REQUIRED IN PRODUCTION
+  SECRET_KEY        random string >= 32 chars (signs login tokens)
+  ADMIN_EMAIL       admin account created on first start
+  ADMIN_PASSWORD    its password (only used when the account is created)
+OPTIONAL
+  GEMINI_API_KEY    enables Document Chat (get one at aistudio.google.com)
+  GEMINI_MODEL      default gemini-flash-lite-latest
+  PORT              default 8000
+  DATABASE_URL      default SQLite in webapp/storage
+  DOCRES_MAX_SIZE   default 512 (higher = slower, use 1600 with a GPU)
+  LAMA_ENABLED      1/0
+  OCR_DEVICE        cpu (or gpu:0 with a Paddle GPU build)
+  ENHANCEMENT_ENABLED  0 (keep off; see 3.8)
+  CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN  only for enhancement
+Never commit .env. It is in .gitignore and .dockerignore.
+
+
+--------------------------------------------------------------------------------
+11. MEASURED PERFORMANCE AND TEST RESULTS (CPU laptop)
+--------------------------------------------------------------------------------
+Restoration, handwritten letter (511x503)   ~40-68 s
+Restoration, printed page (900x640)         ~115-130 s
+  (was 377 s before; OCR line guard changed from one OCR call per line to
+   one per page)
+Damage detection                            0.2-0.6 s
+PaddleOCR read                              ~5 s (first read after start ~23 s)
+DocRes appearance / deblurring              ~17 s / ~46 s
+Document Chat answer                        ~1.5-3 s
+Faded printed sample with ground truth:     original CER 0.0087,
+  DocRes appearance alone CER 0.0087 / WER 0.077
+Handwritten letters: 99.6-100% of ink strokes and 99.2-100% of dots kept.
+Tested and passing: JPG/PNG uploads (incl. image/jpg, image/pjpeg,
+octet-stream), invalid files rejected, restoration jobs, comparison,
+CSV/PDF/image downloads (401 without login), chat (summary, follow-up,
+unrestored upload, empty question 400, no login 401), health check.
+Not yet tested: the Docker image (Docker was not installed on the
+development machine), and the full run of scripts/feature_test.py after the
+last changes.
+
+
+--------------------------------------------------------------------------------
+12. KNOWN LIMITATIONS
+--------------------------------------------------------------------------------
+- Text completely missing under a hole or heavy stain cannot be recovered;
+  LaMa fills paper, it does not know the words.
+- Dark stain centres over writing are kept (removing them could erase ink).
+- OCR is unreliable on cursive handwriting, so the chatbot may misread
+  handwritten dates/names; correct and approve the text in OCR Review.
+- PSNR/SSIM compare with the uploaded original (no clean reference exists):
+  they measure fidelity, not "perfection".
+- CPU only: one restoration at a time, ~1-2 minutes each.
+- Jobs running during a server restart are marked failed (restart them).
+- Photo mode (GFPGAN, Real-ESRGAN, colourization) is switched off.
+
+
+================================================================================
+13. DEPLOYMENT GUIDE
+================================================================================
+
+13.1 Server requirements
+  RAM   : minimum 4 GB, recommended 8 GB
+  CPU   : 2 cores minimum, 4+ recommended
+  Disk  : 10 GB free (Docker image ~5 GB + uploads)
+  GPU   : not needed
+  OS    : Ubuntu 22.04/24.04 (any Linux with Docker works)
+  Free hosting plans with 512 MB-1 GB RAM (Render free, Railway trial,
+  Vercel, Netlify) will NOT work: the models need more memory, and Vercel/
+  Netlify cannot run long Python jobs.
+  Good choices: AWS EC2 t3.large, Azure B2ms, Google Cloud e2-standard-2,
+  DigitalOcean / Hetzner 8 GB VM, or college/lab server.
+
+13.2 Before you start
+  - Code is on GitHub: https://github.com/roopharshad/genai_project
+  - Generate a secret key (any computer with Python):
+        python -c "import secrets; print(secrets.token_urlsafe(48))"
+  - Have your Gemini API key ready (optional, for chat).
+  - Optional: a domain name pointing (A record) to the server's IP.
+
+13.3 OPTION A - Docker (recommended)
+  Step 1. Create the VM, open ports 22, 80 and 443 in its firewall /
+          security group, and connect:  ssh ubuntu@<SERVER_IP>
+  Step 2. Install Docker:
+          curl -fsSL https://get.docker.com | sudo sh
+          sudo usermod -aG docker $USER   (then log out and back in)
+  Step 3. Get the code:
+          git clone https://github.com/roopharshad/genai_project.git
+          cd genai_project
+  Step 4. Create the settings file:
+          cp .env.example .env
+          nano .env
+            SECRET_KEY=<the key from 13.2>
+            ADMIN_EMAIL=<your email>
+            ADMIN_PASSWORD=<a strong password>
+            GEMINI_API_KEY=<your key>
+            ENHANCEMENT_ENABLED=0
+  Step 5. Build and start (first build ~15-25 min; it installs PyTorch,
+          PaddlePaddle and downloads ~380 MB of model weights):
+          docker compose up -d --build
+  Step 6. Check:
+          docker compose ps                    (status "healthy" after ~2 min)
+          curl http://localhost:8000/api/health   -> {"status":"ok"}
+          docker compose logs -f               (Ctrl+C to stop watching)
+  Step 7. Open http://<SERVER_IP>/ and log in with ADMIN_EMAIL /
+          ADMIN_PASSWORD. Upload a sample and run a restoration. The first
+          job is slower (models load, OCR models download).
+
+  Data (database, uploads, results) is in the Docker volume "docrestore-data"
+  and survives restarts and updates.
+
+  Update to a new version:
+          git pull && docker compose up -d --build
+  Stop:   docker compose down        (data is kept)
+  Backup: docker run --rm -v genai_project_docrestore-data:/d -v $PWD:/b \
+          busybox tar czf /b/backup.tgz -C /d .
+
+13.4 OPTION B - Without Docker (Ubuntu)
+  sudo apt update && sudo apt install -y python3.10 python3.10-venv \
+       libgl1 libglib2.0-0 git nodejs npm
+  git clone https://github.com/roopharshad/genai_project.git && cd genai_project
+  python3.10 -m venv .venv && . .venv/bin/activate
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+  pip install -r requirements.txt
+  pip install --no-deps basicsr==1.4.2 facexlib==0.3.0 realesrgan==0.3.0 simple-lama-inpainting==0.1.2
+  pip install paddlepaddle==3.3.1
+  pip install --no-deps paddleocr==3.7.0 paddlex==3.7.2
+  pip install aiohttp aistudio-sdk chardet colorlog modelscope pandas \
+       prettytable imagesize pyclipper shapely pypdfium2 python-bidi ruamel.yaml ujson
+  pip install --force-reinstall --no-deps "opencv-python-headless<5" numpy==2.2.6
+  python scripts/download_models.py
+  (cd webapp/frontend && npm ci && npx vite build)
+  cp .env.example .env && nano .env        (same values as 13.3 step 4)
+  cd webapp/backend
+  ../../.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  To keep it running, create /etc/systemd/system/docrestore.service:
+    [Unit]
+    Description=DocRestore AI
+    After=network.target
+    [Service]
+    User=ubuntu
+    WorkingDirectory=/home/ubuntu/genai_project/webapp/backend
+    ExecStart=/home/ubuntu/genai_project/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+    Restart=always
+    [Install]
+    WantedBy=multi-user.target
+  then: sudo systemctl daemon-reload && sudo systemctl enable --now docrestore
+
+13.5 HTTPS (recommended, needs a domain)
+  Easiest with Caddy (automatic Let's Encrypt certificate):
+    sudo apt install -y caddy
+    sudo nano /etc/caddy/Caddyfile
+        your-domain.com {
+            reverse_proxy localhost:8000
+        }
+    sudo systemctl reload caddy
+  With Docker, change the port in docker-compose.yml from "80:8000" to
+  "127.0.0.1:8000:8000" so only Caddy is reachable from outside.
+  Uploads up to 25 MB: Caddy has no limit by default; with Nginx set
+  client_max_body_size 30M; and proxy_read_timeout 300s;
+
+13.6 Running locally on Windows (development / demo)
+  .\run.ps1     (creates .venv on first run, then serves http://127.0.0.1:8000)
+  Weights: .\.venv\Scripts\python.exe scripts\download_models.py
+  Frontend after UI changes: cd webapp\frontend; npx vite build
+  If git push fails with "SSL certificate problem":
+      git -c http.sslBackend=schannel push
+
+13.7 Go-live checklist
+  [ ] SECRET_KEY, ADMIN_EMAIL, ADMIN_PASSWORD set (not the demo values)
+  [ ] /api/health returns {"status":"ok"}
+  [ ] Login works, one test restoration completes
+  [ ] Export > PDF report and CSV download
+  [ ] Document Chat answers (if GEMINI_API_KEY is set)
+  [ ] HTTPS enabled
+  [ ] Backup of the data volume planned
+  [ ] API keys rotated if they were ever shared in chats or screenshots
+
+
+--------------------------------------------------------------------------------
+14. TROUBLESHOOTING
+--------------------------------------------------------------------------------
+Container keeps restarting / "Killed"  -> not enough RAM, use >= 4 GB (8 GB).
+Job stuck at "Waiting for processor"   -> another job is running; one at a time.
+Job "Interrupted by server restart"    -> run the restoration again.
+Chat: "GEMINI_API_KEY is not set"      -> add the key to .env, restart.
+Chat: "Gemini is unavailable"          -> Google is busy (503) or quota used;
+                                          try again later.
+Downloads give 401                     -> log in again (token expired).
+"Frontend not built" JSON on /          -> build the frontend (13.4).
+OCR first read very slow                -> normal: models download once.
+Logs: docker compose logs -f   or   journalctl -u docrestore -f
+
+
+--------------------------------------------------------------------------------
+15. CREDITS AND LICENCES
+--------------------------------------------------------------------------------
+DocRes        - ZZZHANG-jx/DocRes (CVPR 2024), weights from the official
+                Hugging Face Space qubvel-hf/documents-restoration
+LaMa          - advimman/lama (Apache-2.0), packaged by
+                enesmsahin/simple-lama-inpainting
+PaddleOCR     - PaddlePaddle/PaddleOCR (Apache-2.0), PP-OCRv5 models
+GFPGAN        - TencentARC/GFPGAN (Apache-2.0)
+Real-ESRGAN   - xinntao/Real-ESRGAN (BSD-3-Clause)
+Colourization - richzhang/colorization (BSD-2-Clause)
+Gemini        - Google Gemini API (Google terms of service)
+FLUX.2 klein  - Black Forest Labs, via Cloudflare Workers AI (optional, off)
+Check each licence before commercial use.
+================================================================================
