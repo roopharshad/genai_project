@@ -20,7 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # CPU PyTorch first (the default index would pull the multi-GB CUDA build)
-RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# The base image's old pip rejects the PyTorch index's typing_extensions wheel ("inconsistent
+# Name"), so upgrade pip first and take torch's other dependencies from PyPI.
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install torch==2.14.1 torchvision==0.29.2 \
+        --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 # Packages installed without dependencies so they cannot replace the pinned OpenCV/NumPy/torch
