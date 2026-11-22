@@ -2,7 +2,7 @@
 
 Usage:
   python scripts/download_models.py          # required for document restoration (~380 MB)
-  python scripts/download_models.py --all    # also photo models (GFPGAN, Real-ESRGAN, colourization)
+  python scripts/download_models.py --all    # also the colourization model (photo helper, unused)
 
 Existing files with the expected size are skipped, so the script is safe to re-run.
 PaddleOCR downloads its own models (~20 MB) on first use.
@@ -20,14 +20,6 @@ REQUIRED = [
      "https://github.com/enesmsahin/simple-lama-inpainting/releases/download/v0.1.0/big-lama.pt", 190_000_000),
 ]
 OPTIONAL = [
-    ("GFPGAN-master/experiments/pretrained_models/GFPGANv1.4.pth",
-     "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth", 300_000_000),
-    ("GFPGAN-master/gfpgan/weights/detection_Resnet50_Final.pth",
-     "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth", 100_000_000),
-    ("GFPGAN-master/gfpgan/weights/parsing_parsenet.pth",
-     "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth", 80_000_000),
-    ("models/realesrgan/RealESRGAN_x2plus.pth",
-     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth", 60_000_000),
     ("models/colorization/colorization_deploy_v2.prototxt",
      "https://raw.githubusercontent.com/richzhang/colorization/caffe/colorization/models/colorization_deploy_v2.prototxt", 5_000),
     ("models/colorization/pts_in_hull.npy",

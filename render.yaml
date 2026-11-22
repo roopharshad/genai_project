@@ -1,0 +1,36 @@
+# Render Blueprint for DocRestore AI.
+# Render dashboard -> New -> Blueprint -> select this repository. Render reads this file,
+# builds the Dockerfile and asks for the values marked "sync: false".
+services:
+  - type: web
+    name: docrestore-ai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    branch: main
+    # Models need >= 2 GB RAM. "standard" = 2 GB. If the service is killed with
+    # "Out of memory", change to "pro" (4 GB). Free / starter (512 MB) cannot run it.
+    plan: standard
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: docrestore-data
+      mountPath: /app/webapp/storage   # database, uploads, results survive redeploys
+      sizeGB: 10
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true            # Render creates a random value
+      - key: ADMIN_EMAIL
+        sync: false                    # you type it in when creating the Blueprint
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false                    # optional: leave empty to disable Document Chat
+      - key: GEMINI_MODEL
+        value: gemini-flash-lite-latest
+      - key: ENHANCEMENT_ENABLED
+        value: "0"
+      - key: DOCRES_MAX_SIZE
+        value: "512"
+      - key: OCR_DEVICE
+        value: cpu

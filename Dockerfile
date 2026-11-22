@@ -24,7 +24,7 @@ RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/c
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 # Packages installed without dependencies so they cannot replace the pinned OpenCV/NumPy/torch
-RUN pip install --no-deps basicsr==1.4.2 facexlib==0.3.0 realesrgan==0.3.0 simple-lama-inpainting==0.1.2 \
+RUN pip install --no-deps simple-lama-inpainting==0.1.2 \
     && pip install paddlepaddle==3.3.1 \
     && pip install --no-deps paddleocr==3.7.0 paddlex==3.7.2 \
     && pip install aiohttp aistudio-sdk chardet colorlog modelscope pandas prettytable imagesize \

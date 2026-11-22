@@ -1,11 +1,7 @@
-"""Inference registry: routes every restoration job to the DocRestore AI model.
+"""Inference registry: routes every restoration job to the document restoration pipeline.
 
-The UI from the design package is unchanged. Its preset / catalog ids are kept, but
-each one now runs the project's existing model pipeline (no PyTorch needed):
-
-  backend/services/gfpgan_service.py   hosted AI Image Restoration (faces + 2x enhance)
-  backend/services/enhance_service.py  scratch removal, colourization, document cleanup
-  app/ml_engine/models/opencv          classical OpenCV baseline (from the design package)
+The UI preset / catalog ids are kept; this deployment is document-only, so every preset runs
+backend/services/document_pipeline.py (damage detection, LaMa, DocRes, PaddleOCR checks).
 """
 import os
 import sys
@@ -28,49 +24,7 @@ truststore.inject_into_ssl()
 
 import torch  # noqa: E402,F401  (load torch before paddle; both ship MKL DLLs on Windows)
 
-from backend.services import (  # noqa: E402
-    docres_service, document_pipeline, enhance_service, gfpgan_service, local_gfpgan_service,
-    local_realesrgan_service)
-from app.ml_engine.models.opencv.classical_restorer import OpenCVRestorer  # noqa: E402
-
-
-def _fit(img: Image.Image, side: int = 1600) -> Image.Image:
-    if max(img.size) <= side:
-        return img
-    s = side / max(img.size)
-    return img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
-
-
-def _photo_pipeline(img: Image.Image, mode: str, cfg: Dict[str, Any], steps: List[str]) -> Image.Image:
-    scale = float(cfg.get("scale", 2))
-    mono = enhance_service._looks_monochrome(img)
-    if cfg.get("remove_marks", True):
-        img, pct = enhance_service.remove_marks(img, cfg.get("mark_strength", "normal"))
-        steps.append(f"Removed scratches and marks ({pct}% of pixels)" if pct else "No scratches detected")
-    engine = os.getenv("RESTORATION_ENGINE", "local").lower()  # local | hosted
-    ok, why = local_gfpgan_service.available()
-    if engine == "local" and ok:
-        weight = {"balanced": 0.5, "fidelity": 0.3, "detail": 0.8}.get(mode, 0.5)
-        img, faces = local_gfpgan_service.restore(img, scale, weight)
-        bg_ai = os.getenv("REALESRGAN_ENABLED", "1") == "1" and local_realesrgan_service.available()[0]
-        detail = "Real-ESRGAN restored background detail; " if bg_ai else ""
-        steps.append(f"{detail}GFPGAN v1.4 restored {faces} face(s), upscaled {scale:g}x"
-                     if faces else f"{detail}no faces found; image upscaled {scale:g}x")
-    else:
-        if engine == "local":
-            steps.append(f"Local GFPGAN unavailable ({why}); used hosted service")
-        img = gfpgan_service.restore(img, mode, scale)
-        steps.append(f"AI Image Restoration ({gfpgan_service.MODES[mode][1]}, hosted), upscaled {scale:g}x")
-    if cfg.get("colorize", False):
-        if mono:
-            img = enhance_service.colorize(img)
-            steps.append("Added colour (AI colourization)")
-        else:
-            steps.append("Colourization skipped: image already has colour")
-    if cfg.get("clarity", True):
-        img = enhance_service.finish_photo(img)
-        steps.append("Improved clarity (local contrast + sharpening)")
-    return img
+from backend.services import docres_service, document_pipeline, enhance_service  # noqa: E402
 
 
 STAGES_DIR = Path(__file__).resolve().parents[4] / "storage" / "stages"
@@ -203,11 +157,8 @@ class ModelRegistry:
 
         # This deployment accepts documents only; every preset uses the protected document pipeline.
         full = Image.fromarray(input_image_np).convert("RGB")
-        try:
-            steps.append("Document-only mode: using protected document restoration")
-            out = _document_pipeline(full, config, steps, extra, progress)
-        except gfpgan_service.RestorationError as exc:
-            raise RuntimeError(str(exc)) from exc
+        steps.append("Document-only mode: using protected document restoration")
+        out = _document_pipeline(full, config, steps, extra, progress)
         restored = np.array(out.convert("RGB"))
 
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
