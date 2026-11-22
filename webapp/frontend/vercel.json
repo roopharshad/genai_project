@@ -1,0 +1,11 @@
+{
+  "framework": "vite",
+  "installCommand": "npm ci",
+  "buildCommand": "npx vite build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://docrestore-ai.onrender.com/api/:path*" },
+    { "source": "/storage/:path*", "destination": "https://docrestore-ai.onrender.com/storage/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
