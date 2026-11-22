@@ -139,7 +139,9 @@ def run(original: Image.Image, stage_dir: Path, steps: list, ground_truth: str |
         tick("paper_s", t0)
         return out
 
-    if config.get("fast_mode", False):
+    # RESTORATION_MODE=fast (env) skips DocRes and OCR: for servers with very little CPU.
+    if config.get("fast_mode", False) or os.getenv("RESTORATION_MODE", "full").lower() == "fast":
+        steps.append("Quick mode: paper cleanup and tear repair only")
         final = paper_candidate(current) or current
         report["mode"] = "fast"
         report["final_quality"] = paper.quality(pre, final, p_mask)

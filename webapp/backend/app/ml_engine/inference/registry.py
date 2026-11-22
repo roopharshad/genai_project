@@ -22,7 +22,11 @@ import truststore  # noqa: E402
 
 truststore.inject_into_ssl()
 
+from backend import config as _cfg  # noqa: E402,F401  (sizes CPU thread pools before torch loads)
+
 import torch  # noqa: E402,F401  (load torch before paddle; both ship MKL DLLs on Windows)
+
+torch.set_num_threads(_cfg.usable_cpus())
 
 from backend.services import docres_service, document_pipeline, enhance_service  # noqa: E402
 

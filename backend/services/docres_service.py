@@ -63,7 +63,7 @@ def _load():
     from data.preprocess.crop_merge_image import stride_integral
     from models import restormer_arch
 
-    torch.set_num_threads(max(1, os.cpu_count() or 1))
+    torch.set_num_threads(config.usable_cpus())
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     t = time.time()
     model = restormer_arch.Restormer(
